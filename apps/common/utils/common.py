@@ -131,6 +131,18 @@ def markdown_to_plain_text(md: str) -> str:
     return text
 
 
+def normalize_query_text(text: str) -> str:
+    if text is None:
+        return ""
+    text = str(text).replace("\u3000", " ").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[！？]{2,}", lambda m: m.group(0)[0], text)
+    return text
+
+
+
 def get_file_content(path):
     with open(path, "r", encoding='utf-8') as file:
         content = file.read()

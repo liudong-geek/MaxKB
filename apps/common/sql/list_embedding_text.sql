@@ -20,10 +20,11 @@ SELECT
 	paragraph."id" AS paragraph_id,
 	paragraph.knowledge_id AS knowledge_id,
 	1 AS source_type,
-	concat_ws(E'\n',paragraph.title,paragraph."content") AS "text",
+	concat_ws(E'\n',"document"."name",paragraph.title,paragraph."content") AS "text",
 	paragraph.is_active AS is_active,
 	paragraph.chunks AS chunks
 FROM
 	paragraph paragraph
+	LEFT JOIN "document" "document" ON "document"."id" = paragraph.document_id
 
  ${paragraph}

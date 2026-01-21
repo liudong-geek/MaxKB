@@ -17,7 +17,8 @@ from common.utils.split_model import flat_map
 from models_provider.tools import get_model_instance_by_model_workspace_id
 
 prompt = _(
-    "() contains the user's question. Answer the guessed user's question based on the context ({question}) Requirement: Output a complete question and put it in the <data></data> tag")
+    "You are a query rewrite assistant. Using the chat history, rewrite the user's question ({question}) into a complete and explicit retrieval query. Requirements: 1) Output ONLY the rewritten query inside <data></data>. 2) Remove fillers and politeness. 3) Resolve pronouns based on history. 4) Keep domain terms unchanged. 5) If the question is already clear, return it as-is in <data></data>.")
+
 
 
 class BaseResetProblemStep(IResetProblemStep):
@@ -36,14 +37,27 @@ class BaseResetProblemStep(IResetProblemStep):
         message_list = [*flat_map(history_message),
                         HumanMessage(content=reset_prompt.replace('{question}', problem_text))]
         response = chat_model.invoke(message_list)
+
+        def clean_text(text: str) -> str:
+            if text is None:
+                return ''
+            cleaned = text.strip().strip('"').strip("'")
+            if '\n' in cleaned:
+                cleaned = cleaned.splitlines()[0].strip()
+            return cleaned
+
         padding_problem = problem_text
         if response.content.__contains__("<data>") and response.content.__contains__('</data>'):
             padding_problem_data = response.content[
                                    response.content.index('<data>') + 6:response.content.index('</data>')]
-            if padding_problem_data is not None and len(padding_problem_data.strip()) > 0:
-                padding_problem = padding_problem_data
+            cleaned_problem = clean_text(padding_problem_data)
+            if cleaned_problem:
+                padding_problem = cleaned_problem
         elif len(response.content) > 0:
-            padding_problem = response.content
+            cleaned_problem = clean_text(response.content)
+            if cleaned_problem:
+                padding_problem = cleaned_problem
+
 
         try:
             request_token = chat_model.get_num_tokens_from_messages(message_list)

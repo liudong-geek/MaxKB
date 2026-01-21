@@ -9,12 +9,40 @@ from common.utils.logger import maxkb_logger
 
 
 class XlsParseTableHandle(BaseParseTableHandle):
+    TITLE_KEYS = {'分段标题', '标题', '段落标题', 'section_title', 'title'}
+    CONTENT_KEYS = {'分段内容', '内容', '段落内容', 'content', 'text', '正文'}
+
     def support(self, file, get_buffer):
         file_name: str = file.name.lower()
         buffer = get_buffer(file)
         if file_name.endswith(".xls") and xlrd.inspect_format(content=buffer):
             return True
         return False
+
+    def _extract_paragraph(self, row: dict):
+        title = ''
+        content = ''
+        extras = []
+        for key, value in row.items():
+            key_text = str(key).strip()
+            value_text = '' if value is None else str(value).strip()
+            if not title and key_text in self.TITLE_KEYS:
+                title = value_text
+                continue
+            if not content and key_text in self.CONTENT_KEYS:
+                content = value_text
+                continue
+            if key_text:
+                extras.append(f"{key_text}: {value_text}")
+        if content:
+            if extras:
+                content = f"{content}\n" + "; ".join(extras)
+        else:
+            content = "; ".join(extras)
+        if not content:
+            content = "; ".join([f"{key}: {value}" for key, value in row.items()])
+        return {'title': title, 'content': content}
+
 
     def handle(self, file, get_buffer, save_image):
         buffer = get_buffer(file)
@@ -49,9 +77,8 @@ class XlsParseTableHandle(BaseParseTableHandle):
                     data.append(row_data)
 
                 for row in data:
-                    row_output = "; ".join([f"{key}: {value}" for key, value in row.items()])
-                    # print(row_output)
-                    paragraphs.append({'title': '', 'content': row_output})
+                    paragraphs.append(self._extract_paragraph(row))
+
 
                 result.append({'name': sheet.name, 'paragraphs': paragraphs})
 

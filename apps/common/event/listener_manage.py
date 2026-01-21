@@ -84,7 +84,14 @@ class ListenerManagement:
                     **{'paragraph.id__in': paragraph_id_list}),
                     'paragraph': QuerySet(Paragraph).filter(id__in=paragraph_id_list)},
                 select_string=get_file_content(
-                    os.path.join(PROJECT_DIR, "apps", "common", 'sql', 'list_embedding_text.sql')))
+                    os.path.join(PROJECT_DIR, "apps", "common", 'sql', 'list_embedding_text.sql')),
+                field_replace_dict={
+                    'paragraph': {
+                        '"id"': '"paragraph"."id"'
+                    }
+                })
+
+
             ListenerManagement.embedding_by_paragraph_data_list(data_list, paragraph_id_list=paragraph_id_list,
                                                                 embedding_model=embedding_model)
         except Exception as e:
@@ -136,7 +143,14 @@ class ListenerManagement:
                     **{'paragraph.id': paragraph_id}),
                     'paragraph': QuerySet(Paragraph).filter(id=paragraph_id)},
                 select_string=get_file_content(
-                    os.path.join(PROJECT_DIR, "apps", "common", 'sql', 'list_embedding_text.sql')))
+                    os.path.join(PROJECT_DIR, "apps", "common", 'sql', 'list_embedding_text.sql')),
+                field_replace_dict={
+                    'paragraph': {
+                        '"id"': '"paragraph"."id"'
+                    }
+                })
+
+
             # 删除段落
             VectorStore.get_embedding_vector().delete_by_paragraph_id(paragraph_id)
 

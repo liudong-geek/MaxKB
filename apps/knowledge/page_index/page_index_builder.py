@@ -16,6 +16,19 @@ class PageIndex:
     
     def __init__(self, knowledge: Knowledge):
         self.knowledge = knowledge
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        if not title:
+            return ''
+        cleaned = re.sub(r'^\s*#+\s*', '', str(title))
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        return cleaned.strip()
+
+    def _normalize_path(self, path: List[str]) -> List[str]:
+        normalized = [self._normalize_title(item) for item in path]
+        return [item for item in normalized if item]
+
     
     @classmethod
     def from_documents(
@@ -187,19 +200,22 @@ class PageIndex:
     ):
         """从树结构递归创建节点"""
         for idx, item in enumerate(tree):
-            item_path = current_path + [item['content']]
+            raw_title = item.get('content', '')
+            normalized_title = self._normalize_title(raw_title)
+            item_path = current_path + ([normalized_title] if normalized_title else [])
             
             if item['state'] == 'title':
                 # 创建章节节点
                 node = self._create_node(
                     document=document,
                     level=len(item_path) - 1,
-                    title=item['content'],
+                    title=normalized_title or str(raw_title).strip(),
                     path=item_path,
                     content=self._extract_node_content(item, chunk_size),
                     parent=parent,
                     order=idx
                 )
+
                 
                 # 递归处理子节点
                 children = item.get('children', [])
@@ -227,18 +243,21 @@ class PageIndex:
         order: int = 0
     ) -> PageIndexNode:
         """创建PageIndexNode记录"""
+        normalized_title = self._normalize_title(title)
+        normalized_path = self._normalize_path(path)
         return PageIndexNode.objects.create(
             document=document,
             knowledge=self.knowledge,
             level=level,
-            title=title,
-            path=path,
+            title=normalized_title or title,
+            path=normalized_path,
             parent=parent,
             order=order,
             content=content,
             char_count=len(content),
             embedding_status=State.PENDING.value
         )
+
     
     def _extract_node_content(self, item: Dict, chunk_size: int) -> str:
         """提取节点内容"""

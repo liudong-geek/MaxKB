@@ -4,9 +4,11 @@ SELECT
 	comprehensive_score AS similarity
 FROM
 	(
-	SELECT DISTINCT ON
-		( "paragraph_id" ) (%s * (1 - distance) + %s * ts_similarity) as similarity, *,
-		(%s * (1 - distance) + %s * ts_similarity) AS comprehensive_score
+		SELECT DISTINCT ON
+			( "paragraph_id" ) ((%s * (1 - distance) + %s * ts_similarity) * (1 + COALESCE((meta->>'quality_score')::float, 0) * 0.05) * (1 + COALESCE((meta->>'source_weight')::float, 0) * 0.1)) as similarity, *,
+			((%s * (1 - distance) + %s * ts_similarity) * (1 + COALESCE((meta->>'quality_score')::float, 0) * 0.05) * (1 + COALESCE((meta->>'source_weight')::float, 0) * 0.1)) AS comprehensive_score
+
+
 	FROM
 		(
 		SELECT

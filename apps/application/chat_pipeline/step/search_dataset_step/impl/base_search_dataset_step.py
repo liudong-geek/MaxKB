@@ -19,7 +19,8 @@ from common.config.embedding_config import VectorStore, ModelManage
 from common.constants.permission_constants import RoleConstants
 from common.database_model_manage.database_model_manage import DatabaseModelManage
 from common.db.search import native_search
-from common.utils.common import get_file_content
+from common.utils.common import get_file_content, normalize_query_text
+
 from knowledge.models import Paragraph, Knowledge
 from knowledge.models import SearchMode
 from maxkb.conf import PROJECT_DIR
@@ -62,6 +63,8 @@ class BaseSearchDatasetStep(ISearchDatasetStep):
         if len(knowledge_id_list) == 0:
             return []
         exec_problem_text = padding_problem_text if padding_problem_text is not None else problem_text
+        normalized_problem_text = normalize_query_text(exec_problem_text)
+        query_text = normalized_problem_text or exec_problem_text
         model_id = get_embedding_id(knowledge_id_list)
         model = get_model_by_id(model_id, workspace_id)
         if model.model_type != "EMBEDDING":
@@ -69,10 +72,11 @@ class BaseSearchDatasetStep(ISearchDatasetStep):
         self.context['model_name'] = model.name
         default_params = get_model_default_params(model)
         embedding_model = ModelManage.get_model(model_id, lambda _id: get_model(model, **{**default_params}))
-        embedding_value = embedding_model.embed_query(exec_problem_text)
+        embedding_value = embedding_model.embed_query(query_text)
         vector = VectorStore.get_embedding_vector()
-        embedding_list = vector.query(exec_problem_text, embedding_value, knowledge_id_list, None, exclude_document_id_list,
+        embedding_list = vector.query(query_text, embedding_value, knowledge_id_list, None, exclude_document_id_list,
                                       exclude_paragraph_id_list, True, top_n, similarity, SearchMode(search_mode))
+
         if embedding_list is None:
             return []
 
@@ -97,12 +101,19 @@ class BaseSearchDatasetStep(ISearchDatasetStep):
                         workspace_id,
                         top_n=reranker_top_n
                     )
-                    reranked_docs = reranker_model.compress_documents(documents, exec_problem_text)
+                    reranked_docs = reranker_model.compress_documents(documents, query_text)
 
-                    # Reorder embedding_list based on reranked results
-                    reranked_ids = [doc.metadata.get('paragraph_id') for doc in reranked_docs]
-                    id_to_item = {item.get('paragraph_id'): item for item in embedding_list}
-                    embedding_list = [id_to_item[pid] for pid in reranked_ids if pid in id_to_item]
+                    # Reorder embedding_list based on reranked results, keep remainder to preserve recall
+                    if reranked_docs:
+                        reranked_ids = [doc.metadata.get('paragraph_id') for doc in reranked_docs if doc.metadata]
+                        id_to_item = {item.get('paragraph_id'): item for item in embedding_list}
+                        reranked_set = set(reranked_ids)
+                        reranked_items = [id_to_item[pid] for pid in reranked_ids if pid in id_to_item]
+                        remainder_items = [
+                            item for item in embedding_list if item.get('paragraph_id') not in reranked_set
+                        ]
+                        embedding_list = [*reranked_items, *remainder_items]
+
             except Exception as e:
                 # If reranker fails, continue with original results
                 maxkb_logger.error(f"Reranker failed: {str(e)}, using original search results")

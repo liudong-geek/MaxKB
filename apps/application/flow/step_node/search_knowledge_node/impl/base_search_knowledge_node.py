@@ -18,7 +18,8 @@ from common.config.embedding_config import VectorStore
 from common.constants.permission_constants import RoleConstants
 from common.database_model_manage.database_model_manage import DatabaseModelManage
 from common.db.search import native_search
-from common.utils.common import get_file_content
+from common.utils.common import get_file_content, normalize_query_text
+
 from knowledge.models import Document, Paragraph, Knowledge, SearchMode
 from maxkb.conf import PROJECT_DIR
 from models_provider.tools import get_model_instance_by_model_workspace_id
@@ -132,17 +133,20 @@ class BaseSearchKnowledgeNode(ISearchKnowledgeStepNode):
         model_id = get_embedding_id(knowledge_id_list)
         workspace_id = self.workflow_manage.get_body().get('workspace_id')
         embedding_model = get_model_instance_by_model_workspace_id(model_id, workspace_id)
-        embedding_value = embedding_model.embed_query(question)
+        normalized_question = normalize_query_text(question)
+        query_text = normalized_question or question
+        embedding_value = embedding_model.embed_query(query_text)
         vector = VectorStore.get_embedding_vector()
         exclude_document_id_list = [str(document.id) for document in
                                     QuerySet(Document).filter(
                                         knowledge_id__in=knowledge_id_list,
                                         is_active=False)]
-        embedding_list = vector.query(question, embedding_value, knowledge_id_list, document_id_list,
+        embedding_list = vector.query(query_text, embedding_value, knowledge_id_list, document_id_list,
                                       exclude_document_id_list,
                                       exclude_paragraph_id_list, True, knowledge_setting.get('top_n'),
                                       knowledge_setting.get('similarity'),
                                       SearchMode(knowledge_setting.get('search_mode')))
+
         # 手动关闭数据库连接
         connection.close()
         if embedding_list is None:
