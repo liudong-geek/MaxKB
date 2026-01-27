@@ -50,6 +50,8 @@ class ISearchDatasetStep(IBaseChatPipelineStep):
         enable_reranker = serializers.BooleanField(required=False, default=False, label=_("Enable Reranker"))
         reranker_model_id = serializers.CharField(required=False, allow_null=True, allow_blank=True, label=_("Reranker Model ID"))
         reranker_top_n = serializers.IntegerField(required=False, default=3, min_value=1, max_value=100, label=_("Reranker Top N"))
+        vector_weight = serializers.FloatField(required=False, min_value=0, max_value=1, label=_("Vector Weight"))
+        keyword_weight = serializers.FloatField(required=False, min_value=0, max_value=1, label=_("Keyword Weight"))
 
     def get_step_serializer(self, manage: PipelineManage) -> Type[InstanceSerializer]:
         return self.InstanceSerializer
@@ -68,6 +70,8 @@ class ISearchDatasetStep(IBaseChatPipelineStep):
                 enable_reranker: bool = False,
                 reranker_model_id: str = None,
                 reranker_top_n: int = 3,
+                vector_weight: float = None,
+                keyword_weight: float = None,
                 **kwargs) -> List[ParagraphPipelineModel]:
         """
         关于 用户和补全问题 说明: 补全问题如果有就使用补全问题去查询 反之就用用户原始问题查询
@@ -77,11 +81,12 @@ class ISearchDatasetStep(IBaseChatPipelineStep):
         :param knowledge_id_list:                  需要查询的数据集id列表
         :param exclude_document_id_list:           需要排除的文档id
         :param exclude_paragraph_id_list:          需要排除段落id
-        :param padding_problem_text                补全问题
         :param search_mode                         检索模式
         :param enable_reranker                     是否启用重排序
         :param reranker_model_id                   重排序模型ID
         :param reranker_top_n                      重排序返回数量
+        :param vector_weight                       向量权重
+        :param keyword_weight                      关键词权重
         :param workspace_id                        工作空间id
         :return: 段落列表
         """

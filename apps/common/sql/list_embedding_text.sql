@@ -20,7 +20,13 @@ SELECT
 	paragraph."id" AS paragraph_id,
 	paragraph.knowledge_id AS knowledge_id,
 	1 AS source_type,
-	concat_ws(E'\n',"document"."name",paragraph.title,paragraph."content") AS "text",
+	concat_ws(
+		E'\n',
+		"document"."name",
+		NULLIF(paragraph.section_path, ''),
+		COALESCE(NULLIF(paragraph.section_title, ''), paragraph.title),
+		paragraph."content"
+	) AS "text",
 	paragraph.is_active AS is_active,
 	paragraph.chunks AS chunks
 FROM
@@ -28,3 +34,46 @@ FROM
 	LEFT JOIN "document" "document" ON "document"."id" = paragraph.document_id
 
  ${paragraph}
+
+UNION
+SELECT
+	paragraph."id" AS "source_id",
+	paragraph.document_id AS document_id,
+	paragraph."id" AS paragraph_id,
+	paragraph.knowledge_id AS knowledge_id,
+	2 AS source_type,
+	concat_ws(
+		E'\n',
+		"document"."name",
+		NULLIF(paragraph.section_path, ''),
+		COALESCE(NULLIF(paragraph.section_title, ''), paragraph.title)
+	) AS "text",
+	paragraph.is_active AS is_active,
+	paragraph.chunks AS chunks
+FROM
+	paragraph paragraph
+	LEFT JOIN "document" "document" ON "document"."id" = paragraph.document_id
+
+ ${paragraph_title}
+
+UNION
+SELECT
+	paragraph."id" AS "source_id",
+	paragraph.document_id AS document_id,
+	paragraph."id" AS paragraph_id,
+	paragraph.knowledge_id AS knowledge_id,
+	3 AS source_type,
+	concat_ws(
+		E'\n',
+		"document"."name",
+		NULLIF(paragraph.section_path, ''),
+		COALESCE(NULLIF(paragraph.section_title, ''), paragraph.title),
+		paragraph.summary
+	) AS "text",
+	paragraph.is_active AS is_active,
+	paragraph.chunks AS chunks
+FROM
+	paragraph paragraph
+	LEFT JOIN "document" "document" ON "document"."id" = paragraph.document_id
+
+ ${paragraph_summary}

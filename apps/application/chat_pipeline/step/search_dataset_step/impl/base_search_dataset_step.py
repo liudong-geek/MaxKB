@@ -54,6 +54,8 @@ class BaseSearchDatasetStep(ISearchDatasetStep):
                 enable_reranker: bool = False,
                 reranker_model_id: str = None,
                 reranker_top_n: int = 3,
+                vector_weight: float = None,
+                keyword_weight: float = None,
                 **kwargs) -> List[ParagraphPipelineModel]:
         get_knowledge_list_of_authorized = DatabaseModelManage.get_model('get_knowledge_list_of_authorized')
         chat_user_type = manage.context.get('chat_user_type')
@@ -75,7 +77,8 @@ class BaseSearchDatasetStep(ISearchDatasetStep):
         embedding_value = embedding_model.embed_query(query_text)
         vector = VectorStore.get_embedding_vector()
         embedding_list = vector.query(query_text, embedding_value, knowledge_id_list, None, exclude_document_id_list,
-                                      exclude_paragraph_id_list, True, top_n, similarity, SearchMode(search_mode))
+                                      exclude_paragraph_id_list, True, top_n, similarity, SearchMode(search_mode),
+                                      vector_weight, keyword_weight)
 
         if embedding_list is None:
             return []

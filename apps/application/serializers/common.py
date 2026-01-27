@@ -179,6 +179,11 @@ class ChatInfo:
             'application_enable': self.application.application_enable,
             'application_ids': self.application.application_ids,
             'mcp_output_enable': self.application.mcp_output_enable,
+            'enable_reranker': knowledge_setting.get('enable_reranker', False),
+            'reranker_model_id': knowledge_setting.get('reranker_model_id'),
+            'reranker_top_n': knowledge_setting.get('reranker_top_n', 3),
+            'vector_weight': knowledge_setting.get('vector_weight'),
+            'keyword_weight': knowledge_setting.get('keyword_weight'),
         }
 
     def to_pipeline_manage_params(self, problem_text: str, post_response_handler,

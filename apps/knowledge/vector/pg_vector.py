@@ -164,12 +164,20 @@ class PGVector(BaseVectorStore):
         2. 段落内容包含在节点内容中（基于内容匹配）
         3. Fallback 到文档根节点（level=0）
         """
-        # 注意：source_type 可能是整数(1)或枚举(SourceType.PARAGRAPH)，需要兼容两种情况
+        # 注意：source_type 可能是整数或枚举，需要兼容多字段向量化类型
+        paragraph_source_types = {
+            SourceType.PARAGRAPH,
+            SourceType.TITLE,
+            SourceType.SUMMARY,
+            SourceType.PARAGRAPH.value,
+            SourceType.TITLE.value,
+            SourceType.SUMMARY.value
+        }
         paragraph_ids = [
             row.get('paragraph_id') for row in text_list
-            if (row.get('source_type') == SourceType.PARAGRAPH or row.get('source_type') == SourceType.PARAGRAPH.value)
-               and row.get('paragraph_id')
+            if row.get('paragraph_id') and row.get('source_type') in paragraph_source_types
         ]
+
         if not paragraph_ids:
             return {}
 
@@ -385,9 +393,16 @@ class PGVector(BaseVectorStore):
         raw_text = text or ''
         text_for_embedding = raw_text
         # 兼容 source_type 为整数或枚举的情况
-        is_paragraph = (source_type == SourceType.PARAGRAPH or source_type == SourceType.PARAGRAPH.value)
+        is_section_embedding = source_type in (
+            SourceType.PARAGRAPH,
+            SourceType.TITLE,
+            SourceType.SUMMARY,
+            SourceType.PARAGRAPH.value,
+            SourceType.TITLE.value,
+            SourceType.SUMMARY.value
+        )
         node_info = None
-        if is_paragraph and paragraph_id:
+        if is_section_embedding and paragraph_id:
             node_info = self._resolve_page_index_node_info(paragraph_id, document_id, knowledge_id)
             if node_info:
                 context_text = self._build_embedding_context(node_info)
@@ -396,6 +411,7 @@ class PGVector(BaseVectorStore):
                 context_text = self._build_title_context(paragraph_title)
             if context_text:
                 text_for_embedding = f"{context_text}\n{text_for_embedding}"
+
 
 
         text_embedding = [float(x) for x in embedding.embed_query(text_for_embedding)]
@@ -419,7 +435,8 @@ class PGVector(BaseVectorStore):
 
         knowledge_info = QuerySet(Knowledge).filter(id=knowledge_id).values('id', 'name', 'meta').first()
         document_info = QuerySet(Document).filter(id=document_id).values('id', 'name', 'meta').first()
-        embedding_meta = self._build_embedding_meta(knowledge_info, document_info, raw_text, is_paragraph)
+        embedding_meta = self._build_embedding_meta(knowledge_info, document_info, raw_text, is_section_embedding)
+
         if embedding_meta:
             embedding.meta = embedding_meta
 
@@ -430,6 +447,13 @@ class PGVector(BaseVectorStore):
 
 
     def _batch_save(self, text_list: List[Dict], embedding: Embeddings, is_the_task_interrupted):
+        filtered_text_list = [row for row in text_list if (row.get('text') or '').strip()]
+        if len(filtered_text_list) != len(text_list):
+            maxkb_logger.info(f'[PageIndex] _batch_save: filtered empty text {len(text_list) - len(filtered_text_list)}')
+        text_list = filtered_text_list
+        if not text_list:
+            return True
+
         # 调试日志：检查 text_list 的内容
         maxkb_logger.info(f'[PageIndex] _batch_save: text_list count={len(text_list)}')
         if text_list:
@@ -438,6 +462,7 @@ class PGVector(BaseVectorStore):
 
         node_map = self._resolve_page_index_node_map(text_list)
         maxkb_logger.info(f'[PageIndex] _batch_save: node_map size={len(node_map)}')
+
 
         knowledge_ids = {str(row.get('knowledge_id')) for row in text_list if row.get('knowledge_id')}
         document_ids = {str(row.get('document_id')) for row in text_list if row.get('document_id')}
@@ -456,15 +481,23 @@ class PGVector(BaseVectorStore):
         for row in text_list:
             base_text = row.get('text') or ''
             source_type = row.get('source_type')
-            is_paragraph = (source_type == SourceType.PARAGRAPH or source_type == SourceType.PARAGRAPH.value)
+            is_section_embedding = source_type in (
+                SourceType.PARAGRAPH,
+                SourceType.TITLE,
+                SourceType.SUMMARY,
+                SourceType.PARAGRAPH.value,
+                SourceType.TITLE.value,
+                SourceType.SUMMARY.value
+            )
             context_text = ''
-            if is_paragraph and row.get('paragraph_id'):
+            if is_section_embedding and row.get('paragraph_id'):
                 node_info = node_map.get(str(row.get('paragraph_id')))
                 if node_info:
                     context_text = self._build_embedding_context(node_info)
                 else:
                     paragraph_title = title_map.get(str(row.get('paragraph_id')))
                     context_text = self._build_title_context(paragraph_title)
+
             embedding_text = f"{context_text}\n{base_text}" if context_text else base_text
             embedding_texts.append(embedding_text)
             base_texts.append(base_text)
@@ -494,8 +527,15 @@ class PGVector(BaseVectorStore):
 
             # 兼容 source_type 为整数或枚举的情况
             source_type = row.get('source_type')
-            is_paragraph = (source_type == SourceType.PARAGRAPH or source_type == SourceType.PARAGRAPH.value)
-            if is_paragraph and row.get('paragraph_id'):
+            is_section_embedding = source_type in (
+                SourceType.PARAGRAPH,
+                SourceType.TITLE,
+                SourceType.SUMMARY,
+                SourceType.PARAGRAPH.value,
+                SourceType.TITLE.value,
+                SourceType.SUMMARY.value
+            )
+            if is_section_embedding and row.get('paragraph_id'):
                 node_info = node_map.get(str(row.get('paragraph_id')))
                 if node_info:
                     embedding_item.page_index_node_id = node_info.get('id')
@@ -504,9 +544,10 @@ class PGVector(BaseVectorStore):
                     embedding_item.sibling_index = node_info.get('order', 0)
                     matched_count += 1
 
+
             knowledge_info = knowledge_map.get(str(row.get('knowledge_id'))) if row.get('knowledge_id') else None
             document_info = document_map.get(str(row.get('document_id'))) if row.get('document_id') else None
-            embedding_meta = self._build_embedding_meta(knowledge_info, document_info, base_text, is_paragraph)
+            embedding_meta = self._build_embedding_meta(knowledge_info, document_info, base_text, is_section_embedding)
 
             if embedding_meta:
                 embedding_item.meta = embedding_meta
@@ -556,7 +597,7 @@ class PGVector(BaseVectorStore):
               document_id_list: list[str],
               exclude_document_id_list: list[str],
               exclude_paragraph_list: list[str], is_active: bool, top_n: int, similarity: float,
-              search_mode: SearchMode):
+              search_mode: SearchMode, vector_weight: float = None, keyword_weight: float = None):
         exclude_dict = {}
         if knowledge_id_list is None or len(knowledge_id_list) == 0:
             return []
@@ -584,6 +625,9 @@ class PGVector(BaseVectorStore):
         # 回退到传统检索模式
         for search_handle in search_handle_list:
             if search_handle.support(search_mode):
+                if isinstance(search_handle, BlendSearch):
+                    return search_handle.handle(query_set, query_text, query_embedding, top_n, similarity, search_mode,
+                                                vector_weight, keyword_weight)
                 return search_handle.handle(query_set, query_text, query_embedding, top_n, similarity, search_mode)
 
     def _try_page_index_search(
@@ -791,12 +835,17 @@ class BlendSearch(ISearch):
                query_embedding,
                top_number: int,
                similarity: float,
-               search_mode: SearchMode):
+               search_mode: SearchMode,
+               vector_weight: float = None,
+               keyword_weight: float = None):
         exec_sql, exec_params = generate_sql_by_query_dict({'embedding_query': query_set},
                                                            select_string=get_file_content(
                                                                os.path.join(PROJECT_DIR, "apps", "knowledge", 'sql',
                                                                             'blend_search.sql')),
                                                            with_table_name=True)
+        
+        # 调试日志 (使用 WARNING 以便在 DEBUG 日志中更显眼)
+        maxkb_logger.warning(f"[BlendSearch] SQL模板解析成功, exec_params数量={len(exec_params)}")
 
         def parse_weight(value):
             try:
@@ -804,11 +853,16 @@ class BlendSearch(ISearch):
             except (TypeError, ValueError):
                 return None
 
+        # 优先使用传入的权重参数
+        param_vector_weight = parse_weight(vector_weight)
+        param_keyword_weight = parse_weight(keyword_weight)
+
         knowledge_id = query_set.values_list('knowledge_id', flat=True).first()
         knowledge_meta = {}
         if knowledge_id:
             knowledge_meta = QuerySet(Knowledge).filter(id=knowledge_id).values_list('meta', flat=True).first() or {}
 
+        # 其次检查知识库配置
         override_vector_weight = parse_weight(
             knowledge_meta.get('vector_weight') or knowledge_meta.get('embedding_weight')
         )
@@ -818,36 +872,62 @@ class BlendSearch(ISearch):
         query_length = len(query_text.strip())
         if query_length <= 5:
             # 超短查询：关键词权重占主导
-            vector_weight = 0.1
-            keyword_weight = 0.9
+            default_vector_weight = 0.1
+            default_keyword_weight = 0.9
         elif query_length <= 10:
             # 极短查询
-            vector_weight = 0.2
-            keyword_weight = 0.8
+            default_vector_weight = 0.2
+            default_keyword_weight = 0.8
         elif query_length <= 20:
             # 短查询
-            vector_weight = 0.35
-            keyword_weight = 0.65
+            default_vector_weight = 0.35
+            default_keyword_weight = 0.65
         elif query_length <= 40:
             # 中等查询
-            vector_weight = 0.5
-            keyword_weight = 0.5
+            default_vector_weight = 0.5
+            default_keyword_weight = 0.5
         else:
             # 长查询：向量权重较高
-            vector_weight = 0.65
-            keyword_weight = 0.35
+            default_vector_weight = 0.65
+            default_keyword_weight = 0.35
 
-        if override_vector_weight is not None or override_keyword_weight is not None:
-            if override_vector_weight is None and override_keyword_weight is not None:
+        # 确定最终权重
+        # 优先级：参数 > 知识库配置 > 默认动态权重
+        if param_vector_weight is not None or param_keyword_weight is not None:
+             # 如果只传了一个，另一个互补
+            if param_vector_weight is None:
+                param_vector_weight = max(1.0 - param_keyword_weight, 0.0)
+            if param_keyword_weight is None:
+                param_keyword_weight = max(1.0 - param_vector_weight, 0.0)
+            
+            vector_weight = param_vector_weight
+            keyword_weight = param_keyword_weight
+            
+            # 归一化
+            total = vector_weight + keyword_weight
+            if total > 0:
+                vector_weight = vector_weight / total
+                keyword_weight = keyword_weight / total
+
+        elif override_vector_weight is not None or override_keyword_weight is not None:
+            if override_vector_weight is None:
                 override_vector_weight = max(1.0 - override_keyword_weight, 0.0)
-            if override_keyword_weight is None and override_vector_weight is not None:
+            if override_keyword_weight is None:
                 override_keyword_weight = max(1.0 - override_vector_weight, 0.0)
+            
             total = (override_vector_weight or 0.0) + (override_keyword_weight or 0.0)
             if total > 0:
                 vector_weight = (override_vector_weight or 0.0) / total
                 keyword_weight = (override_keyword_weight or 0.0) / total
+        else:
+            vector_weight = default_vector_weight
+            keyword_weight = default_keyword_weight
 
 
+        # 调试日志：显示关键参数 (使用 WARNING 以便在 DEBUG 日志中更显眼)
+        query_tokens = to_query(query_text)
+        maxkb_logger.warning(f"[BlendSearch] 执行查询: vector_weight={vector_weight}, keyword_weight={keyword_weight}, "
+                            f"query_tokens='{query_tokens}', similarity={similarity}, top_n={top_number}")
 
         embedding_model = select_list(exec_sql, [
             vector_weight,  # Vector weight (dynamic)
@@ -856,10 +936,12 @@ class BlendSearch(ISearch):
             keyword_weight,  # Keyword weight for comprehensive_score
             len(query_embedding),
             json.dumps(query_embedding),
-            to_query(query_text),
+            query_tokens,
             *exec_params, similarity,
             top_number
         ])
+        
+        maxkb_logger.warning(f"[BlendSearch] 查询完成: 结果数量={len(embedding_model)}")
         return embedding_model
 
     def support(self, search_mode: SearchMode):

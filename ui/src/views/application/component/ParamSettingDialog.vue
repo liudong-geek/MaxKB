@@ -61,6 +61,32 @@
               </el-card>
             </el-radio-group>
           </el-form-item>
+
+          <el-form-item
+            v-if="form.knowledge_setting.search_mode === 'blend'"
+            :label="$t('views.application.dialog.hybridBalance')"
+          >
+            <div class="flex-between w-full">
+              <span class="mr-8 text-secondary">{{ $t('views.application.dialog.keyword') }}</span>
+              <el-slider
+                v-model="form.knowledge_setting.vector_weight"
+                :min="0"
+                :max="1"
+                :step="0.1"
+                class="flex-1 mr-8"
+                :format-tooltip="
+                  (val) =>
+                    `${$t('views.application.dialog.vector')}: ${(val * 100).toFixed(0)}%, ${$t(
+                      'views.application.dialog.keyword',
+                    )}: ${((1 - val) * 100).toFixed(0)}%`
+                "
+              />
+              <span class="ml-8 text-secondary">{{ $t('views.application.dialog.vector') }}</span>
+              <span class="ml-8" style="width: 40px"
+                >{{ (form.knowledge_setting.vector_weight * 100).toFixed(0) }}%</span
+              >
+            </div>
+          </el-form-item>
           <el-row :gutter="10">
             <el-col :span="12">
               <el-form-item>
@@ -103,6 +129,37 @@
               </el-form-item>
             </el-col>
           </el-row>
+          <el-form-item :label="$t('views.application.dialog.rerankSettings')">
+            <template #label>
+              <div class="flex-between">
+                <span>{{ $t('views.application.dialog.rerankSettings') }}</span>
+                <el-switch size="small" v-model="form.knowledge_setting.enable_reranker" />
+              </div>
+            </template>
+            <div
+              v-if="form.knowledge_setting.enable_reranker"
+              class="w-full p-16 bg-lighter border-r-4 mt-8"
+            >
+              <el-form-item :label="$t('views.application.dialog.rerankModel')" class="mb-16">
+                <ModelSelect
+                  v-model="form.knowledge_setting.reranker_model_id"
+                  :options="rerankModelOptions"
+                  :placeholder="$t('views.application.dialog.selectRerankModel')"
+                  :model-type="'RERANKER'"
+                  class="w-full"
+                />
+              </el-form-item>
+              <el-form-item :label="$t('views.application.dialog.rerankTopN')" class="mb-0">
+                <el-input-number
+                  v-model="form.knowledge_setting.reranker_top_n"
+                  :min="1"
+                  :max="20"
+                  class="w-full"
+                  controls-position="right"
+                />
+              </el-form-item>
+            </div>
+          </el-form-item>
           <el-form-item :label="$t('views.application.dialog.maxCharacters')">
             <el-slider
               v-model="form.knowledge_setting.max_paragraph_char_number"
@@ -197,8 +254,11 @@ import { ref, watch, reactive } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { isWorkFlow } from '@/utils/application'
 import { t } from '@/locales'
-import { cloneDeep } from 'lodash'
+import { cloneDeep, groupBy } from 'lodash'
+import { loadSharedApi } from '@/utils/dynamics-api/shared-api'
+import useStore from '@/stores'
 const emit = defineEmits(['refresh'])
+const { user, folder } = useStore()
 
 const paramFormRef = ref()
 const noReferencesformRef = ref()
@@ -221,6 +281,10 @@ const form = ref<any>({
     top_n: 3,
     similarity: 0.6,
     max_paragraph_char_number: 5000,
+    vector_weight: 0.7,
+    enable_reranker: false,
+    reranker_model_id: '',
+    reranker_top_n: 3,
     no_references_setting: {
       status: 'ai_questioning',
       value: '{question}',
@@ -254,6 +318,7 @@ const noReferencesRules = reactive<FormRules<any>>({
 
 const dialogVisible = ref<boolean>(false)
 const loading = ref(false)
+const rerankModelOptions = ref<any>(null)
 
 const isWorkflowType = ref(false)
 
@@ -280,6 +345,18 @@ const open = (data: any, type?: string) => {
   }
 
   dialogVisible.value = true
+  getRerankModel()
+}
+
+function getRerankModel() {
+  const obj = {
+    model_type: 'RERANKER',
+  }
+  loadSharedApi({ type: 'model', systemType: 'workspace' })
+    .getSelectModelList(obj)
+    .then((res: any) => {
+      rerankModelOptions.value = groupBy(res?.data, 'provider')
+    })
 }
 
 const submit = async (formEl: FormInstance | undefined) => {

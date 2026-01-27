@@ -180,6 +180,32 @@
             </el-card>
           </el-radio-group>
         </div>
+
+        <div class="mb-16" v-if="cloneForm.search_mode === 'blend'">
+          <div class="title mb-8">
+            {{ $t('views.application.dialog.hybridBalance') }}
+          </div>
+          <div class="flex-between w-full">
+            <span class="mr-8 text-secondary">{{ $t('views.application.dialog.keyword') }}</span>
+            <el-slider
+              v-model="cloneForm.vector_weight"
+              :min="0"
+              :max="1"
+              :step="0.1"
+              class="flex-1 mr-8"
+              :format-tooltip="
+                (val) =>
+                  `${$t('views.application.dialog.vector')}: ${(val * 100).toFixed(0)}%, ${$t(
+                    'views.application.dialog.keyword',
+                  )}: ${((1 - val) * 100).toFixed(0)}%`
+              "
+            />
+            <span class="ml-8 text-secondary">{{ $t('views.application.dialog.vector') }}</span>
+            <span class="ml-8" style="width: 40px"
+              >{{ (cloneForm.vector_weight * 100).toFixed(0) }}%</span
+            >
+          </div>
+        </div>
         <el-row :gutter="20">
           <el-col :span="12">
             <div class="mb-16">
@@ -213,7 +239,42 @@
             </div>
           </el-col>
         </el-row>
-
+        
+        <div class="mb-16">
+          <div class="title mb-8 flex-between">
+            <span>{{ $t('views.application.dialog.rerankSettings') }}</span>
+            <el-switch size="small" v-model="cloneForm.enable_reranker" />
+          </div>
+          <div
+            v-if="cloneForm.enable_reranker"
+            class="w-full p-16 bg-lighter border-r-4 mt-8"
+          >
+            <div class="mb-16">
+              <div class="title mb-8">
+                {{ $t('views.application.dialog.rerankModel') }}
+              </div>
+              <ModelSelect
+                v-model="cloneForm.reranker_model_id"
+                :options="rerankModelOptions"
+                :placeholder="$t('views.application.dialog.selectRerankModel')"
+                :model-type="'RERANKER'"
+                class="w-full"
+              />
+            </div>
+            <div class="mb-0">
+              <div class="title mb-8">
+                {{ $t('views.application.dialog.rerankTopN') }}
+              </div>
+              <el-input-number
+                v-model="cloneForm.reranker_top_n"
+                :min="1"
+                :max="20"
+                class="w-full"
+                controls-position="right"
+              />
+            </div>
+          </div>
+        </div>
         <div class="text-right">
           <el-button @click="popoverVisible = false">{{ $t('common.cancel') }}</el-button>
           <el-button type="primary" @click="settingChange('close')">{{
@@ -250,10 +311,10 @@
   </div>
 </template>
 <script setup lang="ts">
-import { nextTick, ref, onMounted, computed } from 'vue'
+import { nextTick, ref, onMounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import useStore from '@/stores'
-import { cloneDeep } from 'lodash'
+import { cloneDeep, groupBy } from 'lodash'
 import ParagraphDialog from '@/views/paragraph/component/ParagraphDialog.vue'
 import { arraySort } from '@/utils/array'
 import emptyImg from '@/assets/hit-test-empty.png'
@@ -284,7 +345,24 @@ const formInline = ref({
   similarity: 0.6,
   top_number: 5,
   search_mode: 'embedding',
+  vector_weight: 0.7,
+  enable_reranker: false,
+  reranker_model_id: '',
+  reranker_top_n: 3,
 })
+
+const rerankModelOptions = ref<any>(null)
+
+function getRerankModel() {
+  const obj = {
+    model_type: 'RERANKER',
+  }
+  loadSharedApi({ type: 'model', systemType: 'workspace' })
+    .getSelectModelList(obj)
+    .then((res: any) => {
+      rerankModelOptions.value = groupBy(res?.data, 'provider')
+    })
+}
 
 // 第一次加载
 const first = ref(true)
@@ -311,6 +389,7 @@ function settingChange(val: string) {
   if (val === 'open') {
     popoverVisible.value = true
     cloneForm.value = cloneDeep(formInline.value)
+    getRerankModel()
   } else if (val === 'close') {
     popoverVisible.value = false
     formInline.value = cloneDeep(cloneForm.value)

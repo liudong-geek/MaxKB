@@ -236,7 +236,11 @@ class Paragraph(AppModelMixin):
     knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING)
     content = models.CharField(max_length=102400, verbose_name="段落内容")
     title = models.CharField(max_length=256, verbose_name="标题", default="", db_index=True)
+    section_title = models.CharField(max_length=256, verbose_name="章节标题", default="", db_index=True)
+    section_path = models.CharField(max_length=1024, verbose_name="章节路径", default="", db_index=True)
+    summary = models.TextField(verbose_name="章节摘要", default="", blank=True)
     status = models.CharField(verbose_name='状态', max_length=20, default=get_default_status, db_index=True)
+
     status_meta = models.JSONField(verbose_name="状态数据", default=default_status_meta)
     hit_num = models.IntegerField(verbose_name="命中次数", default=0)
     is_active = models.BooleanField(default=True, db_index=True)
@@ -276,6 +280,8 @@ class SourceType(models.IntegerChoices):
     PROBLEM = 0, '问题'
     PARAGRAPH = 1, '段落'
     TITLE = 2, '标题'
+    SUMMARY = 3, '摘要'
+
 
 
 class SearchMode(models.TextChoices):

@@ -139,16 +139,27 @@ class ListenerManagement:
         ListenerManagement.update_status(QuerySet(Paragraph).filter(id=paragraph_id), TaskType.EMBEDDING, State.STARTED)
         try:
             data_list = native_search(
-                {'problem': QuerySet(get_dynamics_model({'paragraph.id': django.db.models.CharField()})).filter(
-                    **{'paragraph.id': paragraph_id}),
-                    'paragraph': QuerySet(Paragraph).filter(id=paragraph_id)},
+                {
+                    'problem': QuerySet(get_dynamics_model({'paragraph_id': django.db.models.CharField()}, 'problem_paragraph_mapping')).filter(
+                        paragraph_id=paragraph_id),
+                    'paragraph': QuerySet(Paragraph).filter(id=paragraph_id),
+                    'paragraph_title': QuerySet(Paragraph).filter(id=paragraph_id),
+                    'paragraph_summary': QuerySet(Paragraph).filter(id=paragraph_id)
+                },
                 select_string=get_file_content(
                     os.path.join(PROJECT_DIR, "apps", "common", 'sql', 'list_embedding_text.sql')),
                 field_replace_dict={
                     'paragraph': {
-                        '"id"': '"paragraph"."id"'
+                        'paragraph_id': 'paragraph.id'
+                    },
+                    'paragraph_title': {
+                        'paragraph_id': 'paragraph.id'
+                    },
+                    'paragraph_summary': {
+                        'paragraph_id': 'paragraph.id'
                     }
-                })
+                },
+                with_table_name=True)
 
 
             # 删除段落

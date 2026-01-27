@@ -3,12 +3,14 @@
 PageIndex树构建器
 从文档列表构建层次树结构索引
 """
+import json
 import re
 from typing import List, Dict, Optional
 from django.db import transaction
 
 from knowledge.models import Document, Knowledge, PageIndexNode, Paragraph, State
 from common.utils.split_model import SplitModel, smart_split_paragraph
+
 
 
 class PageIndex:
@@ -174,9 +176,13 @@ class PageIndex:
 
             print(f"[PageIndex] No title structure found, created {len(block_list)} chunk nodes")
 
-        # 4. 【新增】调度异步向量化任务（事务提交后执行，避免读取不到节点）
+        # 4. 同步段落章节信息（写回 Paragraph.section_title/section_path/summary）
+        self._sync_paragraph_sections(document, paragraphs)
+
+        # 5. 【新增】调度异步向量化任务（事务提交后执行，避免读取不到节点）
         try:
             from knowledge.tasks import generate_page_index_embeddings
+
 
             def _schedule_embedding():
                 generate_page_index_embeddings.delay(str(document.id))
@@ -232,6 +238,112 @@ class PageIndex:
                 parent.char_count = len(parent.content)
                 parent.save()
     
+    def _sync_paragraph_sections(self, document: Document, paragraphs):
+        """同步段落的章节标题/路径/摘要"""
+        paragraph_list = list(paragraphs)
+        if not paragraph_list:
+            return
+
+        nodes = list(PageIndexNode.objects.filter(document=document).values(
+            'id', 'title', 'level', 'path', 'order', 'content'
+        ))
+        if not nodes:
+            return
+
+        root_node = next((node for node in nodes if node.get('level') == 0), None)
+        node_by_title = {}
+        nodes_by_level = []
+
+        for node in nodes:
+            normalized_title = self._normalize_title(node.get('title'))
+            if normalized_title:
+                node_by_title[normalized_title] = node
+            nodes_by_level.append(node)
+
+        nodes_by_level.sort(key=lambda n: -(n.get('level') or 0))
+
+        updates = []
+
+        for paragraph in paragraph_list:
+            para_title = (paragraph.title or '').strip()
+            para_content = (paragraph.content or '').strip()
+            matched_node = None
+
+            normalized_title = self._normalize_title(para_title)
+            if normalized_title:
+                matched_node = node_by_title.get(normalized_title)
+
+            if matched_node is None and para_content:
+                content_prefix = para_content[:100]
+                for node in nodes_by_level:
+                    node_content = node.get('content') or ''
+                    if content_prefix and content_prefix in node_content:
+                        matched_node = node
+                        break
+
+            if matched_node is None:
+                matched_node = root_node
+
+            section_title = (matched_node.get('title') if matched_node else '') or ''
+            section_path = ''
+            if matched_node:
+                path = matched_node.get('path') or []
+                if isinstance(path, str):
+                    try:
+                        path = json.loads(path)
+                    except json.JSONDecodeError:
+                        path = [path]
+                path_items = [self._normalize_title(item) for item in path if item]
+                section_path = " > ".join([item for item in path_items if item])
+
+            summary_source = (matched_node.get('content') if matched_node else '') or ''
+            summary_text = summary_source.strip() or para_content
+            summary = summary_text[:200].strip()
+
+            changed = False
+            if paragraph.section_title != section_title:
+                paragraph.section_title = section_title
+                changed = True
+            if paragraph.section_path != section_path:
+                paragraph.section_path = section_path
+                changed = True
+            if paragraph.summary != summary:
+                paragraph.summary = summary
+                changed = True
+
+            if changed:
+                updates.append(paragraph)
+                print(f"[PageIndex] Paragraph {paragraph.id} updated:")
+                print(f"  section_title: '{section_title}'")
+                print(f"  section_path: '{section_path}'") 
+                print(f"  summary: '{summary[:50]}...'")
+
+        if updates:
+            try:
+                # 使用bulk_update进行批量更新
+                Paragraph.objects.bulk_update(updates, ['section_title', 'section_path', 'summary'])
+                print(f"[PageIndex] Updated paragraph sections: {len(updates)}")
+                
+                # 验证更新结果
+                updated_count = 0
+                for paragraph in updates:
+                    paragraph.refresh_from_db()
+                    if paragraph.section_title or paragraph.section_path or paragraph.summary:
+                        updated_count += 1
+                    else:
+                        print(f"[PageIndex] Warning: Paragraph {paragraph.id} still has empty fields after update")
+                
+                print(f"[PageIndex] Verified {updated_count}/{len(updates)} paragraphs have non-empty fields")
+                
+            except Exception as e:
+                print(f"[PageIndex] Error updating paragraph sections: {e}")
+                # 回退到单个更新
+                for paragraph in updates:
+                    try:
+                        paragraph.save(update_fields=['section_title', 'section_path', 'summary'])
+                    except Exception as e2:
+                        print(f"[PageIndex] Error saving paragraph {paragraph.id}: {e2}")
+
     def _create_node(
         self,
         document: Document,
@@ -257,6 +369,7 @@ class PageIndex:
             char_count=len(content),
             embedding_status=State.PENDING.value
         )
+
 
     
     def _extract_node_content(self, item: Dict, chunk_size: int) -> str:

@@ -18,6 +18,42 @@
       </el-input>
       <span class="lighter" v-else>{{ form.title || '-' }}</span>
     </el-form-item>
+    
+    <el-form-item :label="$t('views.paragraph.form.sectionTitle.label')" v-if="isEdit || form.section_title">
+      <el-input
+        v-if="isEdit"
+        v-model="form.section_title"
+        :placeholder="$t('views.paragraph.form.sectionTitle.placeholder')"
+        maxlength="256"
+        show-word-limit
+      />
+      <span class="lighter" v-else>{{ form.section_title || '-' }}</span>
+    </el-form-item>
+    
+    <el-form-item :label="$t('views.paragraph.form.sectionPath.label')" v-if="isEdit || form.section_path">
+      <el-input
+        v-if="isEdit"
+        v-model="form.section_path"
+        :placeholder="$t('views.paragraph.form.sectionPath.placeholder')"
+        maxlength="512"
+        show-word-limit
+      />
+      <span class="lighter" v-else>{{ form.section_path || '-' }}</span>
+    </el-form-item>
+    
+    <el-form-item :label="$t('views.paragraph.form.summary.label')">
+      <el-input
+        v-if="isEdit"
+        v-model="form.summary"
+        type="textarea"
+        :rows="2"
+        :placeholder="$t('views.paragraph.form.summary.placeholder')"
+        maxlength="500"
+        show-word-limit
+      />
+      <span class="lighter" v-else>{{ form.summary || '-' }}</span>
+    </el-form-item>
+    
     <el-form-item :label="$t('views.paragraph.form.content.label')" prop="content">
       <MdEditor
         v-if="isEdit"
@@ -94,6 +130,9 @@ const editorRef = ref()
 
 const form = ref<any>({
   title: '',
+  section_title: '',
+  section_path: '',
+  summary: '',
   content: ''
 })
 
@@ -110,8 +149,11 @@ watch(
   () => props.data,
   (value) => {
     if (value && JSON.stringify(value) !== '{}') {
-      form.value.title = value.title
-      form.value.content = value.content
+      form.value.title = value.title || ''
+      form.value.content = value.content || ''
+      form.value.section_title = value.section_title || ''
+      form.value.section_path = value.section_path || ''
+      form.value.summary = value.summary || ''
     }
   },
   {
@@ -165,6 +207,9 @@ const onUploadImg = async (files: any, callback: any) => {
 onUnmounted(() => {
   form.value = {
     title: '',
+    section_title: '',
+    section_path: '',
+    summary: '',
     content: ''
   }
 })

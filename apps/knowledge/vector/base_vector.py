@@ -131,7 +131,7 @@ class BaseVectorStore(ABC):
               document_id_list: list[str] | None,
               exclude_document_id_list: list[str],
               exclude_paragraph_list: list[str], is_active: bool, top_n: int, similarity: float,
-              search_mode: SearchMode):
+              search_mode: SearchMode, vector_weight: float = None, keyword_weight: float = None):
         pass
 
     @abstractmethod

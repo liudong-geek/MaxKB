@@ -312,7 +312,7 @@ def _build_page_index_after_paragraph_creation(document_ids: List[str]):
             maxkb_logger.info(f'[PageIndex] Auto building for document: {document.name} (ID: {doc_id})')
 
             # 导入PageIndex构建器
-            from knowledge.page_index import PageIndex
+            from knowledge.page_index.page_index_builder import PageIndex
 
             # 清理当前文档旧PageIndex节点
             QuerySet(PageIndexNode).filter(document=document).delete()
@@ -336,6 +336,89 @@ def _build_page_index_after_paragraph_creation(document_ids: List[str]):
 
         except Exception as e:
             maxkb_logger.error(f'[PageIndex] Build error for document {doc_id}: {str(e)}', exc_info=True)
+
+
+def _sync_page_index_embeddings_for_document(document: Document):
+    """
+    同步段落向量与PageIndex节点关系
+    
+    Args:
+        document: 文档对象
+    """
+    from knowledge.models import Embedding, PageIndexNode, Paragraph
+    
+    try:
+        # 获取该文档的所有PageIndex节点
+        page_nodes = QuerySet(PageIndexNode).filter(document=document)
+        if not page_nodes.exists():
+            return
+        
+        # 获取该文档的所有段落向量
+        paragraph_embeddings = QuerySet(Embedding).filter(
+            document=document,
+            source_type=SourceType.PARAGRAPH
+        )
+        
+        if not paragraph_embeddings.exists():
+            maxkb_logger.info(f'[PageIndex] No paragraph embeddings found for document {document.id}')
+            return
+        
+        # 建立段落与PageIndex节点的映射关系
+        updated_count = 0
+        for embedding in paragraph_embeddings:
+            paragraph = QuerySet(Paragraph).filter(id=embedding.paragraph_id).first()
+            if not paragraph:
+                continue
+            
+            # 尝试匹配最合适的PageIndex节点
+            matched_node = _find_best_matching_page_node(paragraph, page_nodes)
+            if matched_node:
+                # 更新embedding的page_index_node关联
+                Embedding.objects.filter(id=embedding.id).update(
+                    page_index_node=matched_node,
+                    tree_level=matched_node.level,
+                    tree_path=matched_node.path
+                )
+                updated_count += 1
+        
+        maxkb_logger.info(f'[PageIndex] Synced {updated_count} paragraph embeddings to page nodes for document {document.id}')
+        
+    except Exception as e:
+        maxkb_logger.error(f'[PageIndex] Error syncing embeddings for document {document.id}: {str(e)}', exc_info=True)
+
+
+def _find_best_matching_page_node(paragraph: Paragraph, page_nodes):
+    """
+    为段落找到最匹配的PageIndex节点
+    
+    Args:
+        paragraph: 段落对象
+        page_nodes: PageIndex节点查询集
+        
+    Returns:
+        最匹配的PageIndex节点，如果没有匹配则返回None
+    """
+    from django.db.models import Q
+    
+    # 首先尝试通过标题匹配
+    if paragraph.title:
+        title_match = page_nodes.filter(
+            Q(title__icontains=paragraph.title) |
+            Q(title__icontains=paragraph.section_title)
+        ).first()
+        if title_match:
+            return title_match
+    
+    # 然后尝试通过内容前缀匹配
+    para_content = paragraph.content[:200] if paragraph.content else ""
+    if para_content:
+        for node in page_nodes:
+            node_content = node.content or ""
+            if para_content in node_content or node_content in para_content:
+                return node
+    
+    # 最后返回根节点
+    return page_nodes.filter(level=0).first()
 
 
 def _build_page_index_for_document_if_needed(document: Document):

@@ -28,7 +28,12 @@ from knowledge.task.generate import generate_related_by_paragraph_id_list
 class ParagraphSerializer(serializers.ModelSerializer):
     class Meta:
         model = Paragraph
-        fields = ['id', 'content', 'is_active', 'document_id', 'title', 'create_time', 'update_time', 'position']
+        fields = [
+            'id', 'content', 'is_active', 'document_id', 'title',
+            'section_title', 'section_path', 'summary',
+            'create_time', 'update_time', 'position'
+        ]
+
 
 
 class ParagraphInstanceSerializer(serializers.Serializer):
@@ -39,16 +44,30 @@ class ParagraphInstanceSerializer(serializers.Serializer):
                                     allow_blank=True)
     title = serializers.CharField(required=False, max_length=256, label=_('section title'), allow_null=True,
                                   allow_blank=True)
+    section_title = serializers.CharField(required=False, max_length=256, label=_('section title'), allow_null=True,
+                                         allow_blank=True)
+    section_path = serializers.CharField(required=False, max_length=1024, label=_('section path'), allow_null=True,
+                                        allow_blank=True)
+    summary = serializers.CharField(required=False, max_length=4096, label=_('summary'), allow_null=True,
+                                    allow_blank=True)
     problem_list = ProblemInstanceSerializer(required=False, many=True)
     is_active = serializers.BooleanField(required=False, label=_('Is active'))
+
 
 
 class EditParagraphSerializers(serializers.Serializer):
     title = serializers.CharField(required=False, max_length=256, label=_('section title'), allow_null=True,
                                   allow_blank=True)
+    section_title = serializers.CharField(required=False, max_length=256, label=_('section title'), allow_null=True,
+                                         allow_blank=True)
+    section_path = serializers.CharField(required=False, max_length=1024, label=_('section path'), allow_null=True,
+                                        allow_blank=True)
+    summary = serializers.CharField(required=False, max_length=4096, label=_('summary'), allow_null=True,
+                                    allow_blank=True)
     content = serializers.CharField(required=False, max_length=102400, allow_null=True, allow_blank=True,
                                     label=_('section title'))
     problem_list = ProblemInstanceSerializer(required=False, many=True)
+
 
 
 class ParagraphBatchGenerateRelatedSerializer(serializers.Serializer):
@@ -177,7 +196,8 @@ class ParagraphSerializers(serializers.Serializer):
             self.is_valid()
             EditParagraphSerializers(data=instance).is_valid(raise_exception=True)
             _paragraph = QuerySet(Paragraph).get(id=self.data.get("paragraph_id"))
-            update_keys = ['title', 'content', 'is_active']
+            update_keys = ['title', 'section_title', 'section_path', 'summary', 'content', 'is_active']
+
             for update_key in update_keys:
                 if update_key in instance and instance.get(update_key) is not None:
                     _paragraph.__setattr__(update_key, instance.get(update_key))

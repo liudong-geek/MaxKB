@@ -68,8 +68,20 @@ def generate_sql_by_query_dict(queryset_dict: Dict[str, QuerySet], select_string
         value = queryset_dict.get(key)
         sql, params = compiler_queryset(value, None if field_replace_dict is None else field_replace_dict.get(key),
                                         with_table_name)
-        params_dict = {**params_dict, select_string.index("${" + key + "}"): params}
-        select_string = select_string.replace("${" + key + "}", sql)
+        # 支持两种占位符格式: ${key} 和 $ { key } (某些格式化工具会添加空格)
+        placeholder_compact = "${" + key + "}"
+        placeholder_spaced = "$ { " + key + " }"
+        
+        if placeholder_compact in select_string:
+            placeholder = placeholder_compact
+        elif placeholder_spaced in select_string:
+            placeholder = placeholder_spaced
+        else:
+            raise ValueError(f"Placeholder for '{key}' not found in SQL template. "
+                           f"Expected '{placeholder_compact}' or '{placeholder_spaced}'")
+        
+        params_dict = {**params_dict, select_string.index(placeholder): params}
+        select_string = select_string.replace(placeholder, sql)
 
     for key in sorted(list(params_dict.keys())):
         result_params = [*result_params, *params_dict.get(key)]

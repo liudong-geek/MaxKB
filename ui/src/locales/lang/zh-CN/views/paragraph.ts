@@ -24,6 +24,18 @@ export default {
       label: '分段标题',
       placeholder: '请输入分段标题'
     },
+    sectionTitle: {
+      label: '章节标题',
+      placeholder: '自动识别的章节标题'
+    },
+    sectionPath: {
+      label: '章节路径',
+      placeholder: '自动识别的章节路径'
+    },
+    summary: {
+      label: '章节摘要',
+      placeholder: '自动生成的章节摘要'
+    },
     content: {
       label: '分段内容',
       placeholder: '请输入分段内容',

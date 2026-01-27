@@ -116,8 +116,11 @@ const open = (data: any, str: any) => {
     isEdit.value = true
     position.value = data.position
   } else if (data) {
-    detail.value.title = data.title
-    detail.value.content = data.content
+    detail.value.title = data.title || ''
+    detail.value.content = data.content || ''
+    detail.value.section_title = data.section_title || ''
+    detail.value.section_path = data.section_path || ''
+    detail.value.summary = data.summary || ''
     cloneData.value = cloneDeep(detail.value)
     paragraphId.value = data.id
     document_id.value = data.document_id
