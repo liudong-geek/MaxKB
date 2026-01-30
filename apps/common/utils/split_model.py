@@ -90,7 +90,7 @@ def to_paragraph(obj: dict):
     content = obj['content']
     return {"keywords": get_keyword(content),
             'parent_chain': list(map(lambda p: p['content'], obj['parent_chain'])),
-            'content': ",".join(list(map(lambda p: p['content'], obj['parent_chain']))) + content}
+            'content': " ".join(list(map(lambda p: p['content'], obj['parent_chain']))) + "\n" + content}
 
 
 def get_keyword(content: str):
@@ -111,15 +111,16 @@ def titles_to_paragraph(list_title: List[dict]):
     :return: 块段落
     """
     if len(list_title) > 0:
-        content = "\n,".join(
+        # 修复：使用空格或换行符代替 \n, 和 ,
+        content = "\n".join(
             list(map(lambda d: d['content'].strip("\r\n").strip("\n").strip("\\s"), list_title)))
 
         return {'keywords': '',
                 'parent_chain': list(
                     map(lambda p: p['content'].strip("\r\n").strip("\n").strip("\\s"), list_title[0]['parent_chain'])),
-                'content': ",".join(list(
+                'content': " ".join(list(
                     map(lambda p: p['content'].strip("\r\n").strip("\n").strip("\\s"),
-                        list_title[0]['parent_chain']))) + content}
+                        list_title[0]['parent_chain']))) + "\n" + content}
     return None
 
 

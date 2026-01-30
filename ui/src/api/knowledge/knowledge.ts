@@ -328,13 +328,13 @@ const getKnowledgeWorkflowFormList: (
   node,
   loading,
 ) => {
-  return post(
-    `${prefix.value}/${knowledge_id}/datasource/${type}/${id}/form_list`,
-    { node },
-    {},
-    loading,
-  )
-}
+    return post(
+      `${prefix.value}/${knowledge_id}/datasource/${type}/${id}/form_list`,
+      { node },
+      {},
+      loading,
+    )
+  }
 const getKnowledgeWorkflowDatasourceDetails: (
   knowledge_id: string,
   type: 'local' | 'tool',
@@ -350,13 +350,13 @@ const getKnowledgeWorkflowDatasourceDetails: (
   function_name,
   loading,
 ) => {
-  return post(
-    `${prefix.value}/${knowledge_id}/datasource/${type}/${id}/${function_name}`,
-    params,
-    {},
-    loading,
-  )
-}
+    return post(
+      `${prefix.value}/${knowledge_id}/datasource/${type}/${id}/${function_name}`,
+      params,
+      {},
+      loading,
+    )
+  }
 const workflowAction: (
   knowledge_id: string,
   instance: Dict<any>,
@@ -507,6 +507,19 @@ const postTransformWorkflow: (
   return post(`${prefix.value}/${knowledge_id}/transform_workflow`, data, undefined, loading)
 }
 
+/**
+ * 获取知识库的 PageIndex 构建状态
+ * @param knowledge_id 知识库id
+ * @param loading
+ * @returns { built: boolean, node_count: number, document_with_index: number, total_documents: number }
+ */
+const getPageIndexStatus: (
+  knowledge_id: string,
+  loading?: Ref<boolean>,
+) => Promise<Result<any>> = (knowledge_id, loading) => {
+  return get(`${prefix.value}/${knowledge_id}/page_index_status`, {}, loading)
+}
+
 
 export default {
   getKnowledgeList,
@@ -548,4 +561,5 @@ export default {
   importKnowledgeWorkflow,
   getPageIndexTree,
   postTransformWorkflow,
+  getPageIndexStatus,
 }

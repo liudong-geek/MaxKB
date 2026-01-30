@@ -82,14 +82,15 @@ class PGVector(BaseVectorStore):
         # 策略1：标题精确匹配（支持清洗后匹配）
         normalized_para_title = self._normalize_title(para_title)
         if normalized_para_title:
-            nodes = node_query.exclude(title='').exclude(title__isnull=True).values('id', 'level', 'path', 'order', 'title')
+            nodes = node_query.exclude(title='').exclude(title__isnull=True).values('id', 'level', 'path', 'order', 'title', 'content')
             for n in nodes:
                 if self._normalize_title(n.get('title')) == normalized_para_title:
                     node = {
                         'id': n.get('id'),
                         'level': n.get('level'),
                         'path': n.get('path'),
-                        'order': n.get('order')
+                        'order': n.get('order'),
+                        'content': n.get('content')
                     }
                     break
 
@@ -104,14 +105,15 @@ class PGVector(BaseVectorStore):
                         'id': n.id,
                         'level': n.level,
                         'path': n.path,
-                        'order': n.order
+                        'order': n.order,
+                        'content': n.content
                     }
                     break
 
         # 策略3：Fallback 到根节点
         if node is None:
             node = node_query.filter(level=0).order_by('order').values(
-                'id', 'level', 'path', 'order'
+                'id', 'level', 'path', 'order', 'content'
             ).first()
 
         return node
@@ -157,14 +159,11 @@ class PGVector(BaseVectorStore):
 
     def _resolve_page_index_node_map(self, text_list: List[Dict]):
         """
-        解析段落到 PageIndexNode 的映射关系
-
-        匹配策略（按优先级）：
-        1. 段落标题精确匹配节点标题
-        2. 段落内容包含在节点内容中（基于内容匹配）
-        3. Fallback 到文档根节点（level=0）
+        【Phase 3 简化】获取段落到 PageIndexNode 的映射关系
+        
+        重构后：直接从 Paragraph.page_index_node 读取已建立的外键关联，
+        无需再进行模糊匹配。
         """
-        # 注意：source_type 可能是整数或枚举，需要兼容多字段向量化类型
         paragraph_source_types = {
             SourceType.PARAGRAPH,
             SourceType.TITLE,
@@ -175,112 +174,36 @@ class PGVector(BaseVectorStore):
         }
         paragraph_ids = [
             row.get('paragraph_id') for row in text_list
-            if row.get('paragraph_id') and row.get('source_type') in paragraph_source_types
+            if row.get('paragraph_id') and str(row.get('source_type')) in paragraph_source_types
         ]
 
         if not paragraph_ids:
             return {}
 
-        paragraph_list = list(QuerySet(Paragraph).filter(id__in=paragraph_ids).values(
-            'id', 'title', 'content', 'document_id', 'knowledge_id'
-        ))
-        if not paragraph_list:
-            return {}
-
-        document_ids = {row.get('document_id') for row in paragraph_list}
-
-        # 获取 knowledge_id（假设同一批次的段落属于同一知识库）
-        knowledge_id = str(paragraph_list[0].get('knowledge_id')) if paragraph_list else None
-
-        # 确保 PageIndex 存在
-        if knowledge_id and self._is_page_index_enabled(knowledge_id):
-            self._ensure_page_index_exists(document_ids, knowledge_id)
-
-        # 重新查询节点（包含 content 用于内容匹配）
-        nodes = list(QuerySet(PageIndexNode).filter(document_id__in=document_ids).values(
-            'id', 'title', 'level', 'path', 'order', 'document_id', 'content'
-        ))
-        if not nodes:
-            return {}
-
-        # 构建索引结构（统一使用字符串类型的 document_id）
-        node_by_title = {}  # (doc_id_str, normalized_title) -> node
-        root_by_doc = {}    # doc_id_str -> root_node (level=0)
-        nodes_by_doc = {}   # doc_id_str -> [nodes] (按 level 排序，用于内容匹配)
-
-        for node in nodes:
-            doc_id_str = str(node.get('document_id'))
-
-            # 收集根节点
-            if node.get('level') == 0 and doc_id_str not in root_by_doc:
-                root_by_doc[doc_id_str] = node
-
-            # 按标题索引（清洗后）
-            title = self._normalize_title(node.get('title'))
-            if title:
-                node_by_title[(doc_id_str, title)] = node
-
-
-            # 按文档分组（用于内容匹配）
-            if doc_id_str not in nodes_by_doc:
-                nodes_by_doc[doc_id_str] = []
-            nodes_by_doc[doc_id_str].append(node)
-
-        # 按 level 降序排序（优先匹配更深层的节点）
-        for doc_id_str in nodes_by_doc:
-            nodes_by_doc[doc_id_str].sort(key=lambda n: -n.get('level', 0))
-
+        # 直接查询 Paragraph 及其关联的 page_index_node
+        paragraphs = list(QuerySet(Paragraph).filter(id__in=paragraph_ids).select_related('page_index_node'))
+        
         node_map = {}
-
-        # 调试日志
-        maxkb_logger.info(f'[PageIndex] _resolve_page_index_node_map: paragraph_count={len(paragraph_list)}, nodes_count={len(nodes)}')
-        maxkb_logger.info(f'[PageIndex] root_by_doc keys: {list(root_by_doc.keys())}')
-
-        for paragraph in paragraph_list:
-            knowledge_id_str = str(paragraph.get('knowledge_id'))
-            if not self._is_page_index_enabled(knowledge_id_str):
-                maxkb_logger.info(f'[PageIndex] PageIndex not enabled for knowledge {knowledge_id_str}')
-                continue
-
-            doc_id_str = str(paragraph.get('document_id'))
-            para_id_str = str(paragraph.get('id'))
-            para_title = (paragraph.get('title') or '').strip()
-            para_content = (paragraph.get('content') or '').strip()
-
-            matched_node = None
-
-            # 策略1：标题精确匹配（清洗后）
-            normalized_para_title = self._normalize_title(para_title)
-            if normalized_para_title:
-                matched_node = node_by_title.get((doc_id_str, normalized_para_title))
-                if matched_node:
-                    maxkb_logger.debug(f'[PageIndex] Matched by title: para={para_id_str[:8]}, node={matched_node.get("id")}')
-
-
-            # 策略2：基于内容匹配（段落内容的前100字符在节点内容中）
-            if matched_node is None and para_content and doc_id_str in nodes_by_doc:
-                content_prefix = para_content[:100]
-                for node in nodes_by_doc[doc_id_str]:
-                    node_content = node.get('content') or ''
-                    if content_prefix in node_content:
-                        matched_node = node
-                        maxkb_logger.debug(f'[PageIndex] Matched by content: para={para_id_str[:8]}, node={node.get("id")}')
-                        break
-
-            # 策略3：Fallback 到根节点
-            if matched_node is None:
-                matched_node = root_by_doc.get(doc_id_str)
-                if matched_node:
-                    maxkb_logger.debug(f'[PageIndex] Fallback to root: para={para_id_str[:8]}, node={matched_node.get("id")}')
-                else:
-                    maxkb_logger.warning(f'[PageIndex] No root node found for doc={doc_id_str}')
-
-            if matched_node:
-                node_map[para_id_str] = matched_node
-            else:
-                maxkb_logger.warning(f'[PageIndex] No match for paragraph {para_id_str}')
-
-        maxkb_logger.info(f'[PageIndex] _resolve_page_index_node_map result: {len(node_map)} paragraphs matched')
+        for para in paragraphs:
+            if para.page_index_node:
+                # 构建与旧接口兼容的 node_info 字典
+                node = para.page_index_node
+                node_map[str(para.id)] = {
+                    'id': str(node.id),
+                    'title': node.title,
+                    'level': node.level,
+                    'path': node.path,
+                    'order': node.order,
+                    'document_id': str(node.document_id),
+                    'content': node.content
+                }
+        
+        maxkb_logger.info(f'[PageIndex] _resolve_page_index_node_map: {len(node_map)}/{len(paragraph_ids)} paragraphs have node association')
+        if node_map:
+             # Debug log: print first resolved node info
+             first_key = list(node_map.keys())[0]
+             node_info = node_map[first_key]
+             maxkb_logger.info(f"[PageIndex] Debug Node Content: ID={node_info['id']}, ContentLen={len(node_info.get('content', '') or '')}")
         return node_map
 
     def _get_embedding_meta_maps(self, knowledge_ids: set, document_ids: set):
@@ -381,6 +304,14 @@ class PGVector(BaseVectorStore):
             context_parts.append(f"章节路径：{path_text}")
         if title and (not path_text or title not in path_text):
             context_parts.append(f"章节标题：{title}")
+        
+        # 注入章节摘要（内容）
+        summary = (node_info.get('content') or '').strip()
+        if summary:
+            # 截取前500字符作为摘要，避免token过长
+            summary_text = summary[:500].replace('\n', ' ')
+            context_parts.append(f"章节摘要：{summary_text}")
+
         return "\n".join(context_parts)
 
 
@@ -462,6 +393,11 @@ class PGVector(BaseVectorStore):
 
         node_map = self._resolve_page_index_node_map(text_list)
         maxkb_logger.info(f'[PageIndex] _batch_save: node_map size={len(node_map)}')
+        if node_map and text_list:
+            # DEBUG: Check key mismatch
+            row_id = str(text_list[0].get('paragraph_id'))
+            map_keys = list(node_map.keys())
+            maxkb_logger.info(f"[PageIndex] Key Mismatch Debug: RowID='{row_id}' (len={len(row_id)}) vs MapKeys={map_keys[:3]} (FirstKeyLen={len(map_keys[0]) if map_keys else 0})")
 
 
         knowledge_ids = {str(row.get('knowledge_id')) for row in text_list if row.get('knowledge_id')}
@@ -478,10 +414,11 @@ class PGVector(BaseVectorStore):
 
         embedding_texts = []
         base_texts = []
+        matched_count = 0
         for row in text_list:
             base_text = row.get('text') or ''
             source_type = row.get('source_type')
-            is_section_embedding = source_type in (
+            is_section_embedding = str(source_type) in (
                 SourceType.PARAGRAPH,
                 SourceType.TITLE,
                 SourceType.SUMMARY,
@@ -494,6 +431,7 @@ class PGVector(BaseVectorStore):
                 node_info = node_map.get(str(row.get('paragraph_id')))
                 if node_info:
                     context_text = self._build_embedding_context(node_info)
+                    matched_count += 1
                 else:
                     paragraph_title = title_map.get(str(row.get('paragraph_id')))
                     context_text = self._build_title_context(paragraph_title)
@@ -507,7 +445,7 @@ class PGVector(BaseVectorStore):
 
 
         embedding_list = []
-        matched_count = 0
+        # matched_count already calculated above
         for index in range(0, len(embedding_texts)):
 
             row = text_list[index]
@@ -565,7 +503,9 @@ class PGVector(BaseVectorStore):
     def hit_test(self, query_text, knowledge_id_list: list[str], exclude_document_id_list: list[str], top_number: int,
                  similarity: float,
                  search_mode: SearchMode,
-                 embedding: Embeddings):
+                 embedding: Embeddings,
+                 vector_weight: float = None,
+                 keyword_weight: float = None):
         if knowledge_id_list is None or len(knowledge_id_list) == 0:
             return []
         exclude_dict = {}
@@ -581,14 +521,21 @@ class PGVector(BaseVectorStore):
             embedding_query,
             top_number,
             similarity,
-            search_mode
+            search_mode,
+            vector_weight=vector_weight,
+            keyword_weight=keyword_weight
         )
         if page_index_results is not None:
             return page_index_results
 
         for search_handle in search_handle_list:
             if search_handle.support(search_mode):
-                return search_handle.handle(query_set, query_text, embedding_query, top_number, similarity, search_mode)
+                # 对于 BlendSearch，传递权重参数
+                if hasattr(search_handle, 'handle') and search_mode == SearchMode.blend:
+                    return search_handle.handle(query_set, query_text, embedding_query, top_number, similarity, 
+                                               search_mode, vector_weight, keyword_weight)
+                else:
+                    return search_handle.handle(query_set, query_text, embedding_query, top_number, similarity, search_mode)
 
         return []
 
@@ -639,7 +586,9 @@ class PGVector(BaseVectorStore):
         similarity: float,
         search_mode: SearchMode,
         section_filter: List[str] = None,
-        aggregate_by_section: bool = False
+        aggregate_by_section: bool = False,
+        vector_weight: float = None,
+        keyword_weight: float = None
     ):
         """
         尝试使用PageIndex检索（方案B）
@@ -712,7 +661,9 @@ class PGVector(BaseVectorStore):
                 top_n=meta_top_n,
                 similarity_threshold=meta_similarity,
                 section_filter=section_filter,
-                aggregate_by_section=meta_aggregate
+                aggregate_by_section=meta_aggregate,
+                vector_weight=vector_weight,
+                keyword_weight=keyword_weight
             )
 
 
@@ -778,6 +729,8 @@ class ISearch(ABC):
 
 
 class EmbeddingSearch(ISearch):
+    MAX_CANDIDATE_LIMIT = 200
+
     def handle(self,
                query_set,
                query_text,
@@ -785,19 +738,74 @@ class EmbeddingSearch(ISearch):
                top_number: int,
                similarity: float,
                search_mode: SearchMode):
-        exec_sql, exec_params = generate_sql_by_query_dict({'embedding_query': query_set},
+        
+        # 优化：采用两阶段检索 (Candidate Generation + Reranking)
+        # 1. 候选集生成 (Candidate Generation) - 利用 HNSW 索引
+        candidate_top_k = self.MAX_CANDIDATE_LIMIT
+        
+        # 使用 <=> 运算符利用 vector 索引
+        vector_candidate_sql = """
+            SELECT id FROM embedding 
+            ${embedding_query} 
+            ORDER BY embedding <=> %s 
+            LIMIT %s
+        """
+        
+        v_sql, v_params = generate_sql_by_query_dict(
+            {'embedding_query': query_set},
+            select_string=vector_candidate_sql,
+            with_table_name=True
+        )
+        
+        candidate_ids = set()
+        try:
+            # 参数顺序：WhereParams + QueryVector + Limit
+            # 注意: generate_sql_by_query_dict 返回的 v_sql 可能包含 params 占位符
+            # v_params 是 query_set 过滤条件的参数
+            vector_results = select_list(v_sql, [*v_params, json.dumps(query_embedding), candidate_top_k])
+            for row in vector_results:
+                candidate_ids.add(str(row['id']))
+        except Exception as e:
+            maxkb_logger.error(f"[EmbeddingSearch] Candidate generation failed: {e}")
+            pass
+            
+        maxkb_logger.warning(f"[EmbeddingSearch] Candidate Generation: Count={len(candidate_ids)}")
+        
+        # 2. 精确重排 (Reranking)
+        # 如果有候选，限制范围；否则（或索引失效时）回退到全表扫描（虽然慢但保底）
+        # 只有当确实找到了候选才过滤，否则如果因为某种原因没找到（比如索引还没建好），就走原来逻辑？
+        # 不，如果用了 query_set 依然没结果，说明真的没有。
+        # 这里为了稳健：如果有 id，则 filter(id__in=...)
+        if candidate_ids:
+            final_query_set = query_set.filter(id__in=list(candidate_ids))
+        else:
+            # 候选集为空，可能是真的没匹配，或者 query_set 本身就没数据
+            # 直接使用原始 query_set (可能会全表扫描，但在无结果时也很快)
+            final_query_set = query_set
+
+        exec_sql, exec_params = generate_sql_by_query_dict({'embedding_query': final_query_set},
                                                            select_string=get_file_content(
                                                                os.path.join(PROJECT_DIR, "apps", "knowledge", 'sql',
                                                                             'embedding_search.sql')),
                                                            with_table_name=True)
+                                                           
+        # 调整默认阈值为 0.5 (Winston: catch more relevant but lower-score items)
+        similarity_val = similarity if similarity is not None else 0.5
+        top_n_val = top_number if top_number is not None else 5
+        
+        # maxkb_logger.warning(f"[EmbeddingSearch] Reranking: similarity={similarity_val}, top_n={top_n_val}")
+
         embedding_model = select_list(exec_sql, [
             len(query_embedding),
             json.dumps(query_embedding),
             *exec_params,
-            similarity,
-            top_number
+            similarity_val,
+            top_n_val
         ])
+        
+        # maxkb_logger.warning(f"[EmbeddingSearch] Finish: Return={len(embedding_model)}")
         return embedding_model
+
 
     def support(self, search_mode: SearchMode):
         return search_mode.value == SearchMode.embedding.value
@@ -816,8 +824,10 @@ class KeywordsSearch(ISearch):
                                                                os.path.join(PROJECT_DIR, "apps", "knowledge", 'sql',
                                                                             'keywords_search.sql')),
                                                            with_table_name=True)
+        query_tokens = to_query(query_text)
         embedding_model = select_list(exec_sql, [
-            to_query(query_text),
+            query_tokens,
+            query_tokens,
             *exec_params,
             similarity,
             top_number
@@ -838,95 +848,79 @@ class BlendSearch(ISearch):
                search_mode: SearchMode,
                vector_weight: float = None,
                keyword_weight: float = None):
-        exec_sql, exec_params = generate_sql_by_query_dict({'embedding_query': query_set},
+        # 1. 候选集生成 (Candidate Generation)
+        candidate_top_k = 100
+        candidate_ids = set()
+
+        # 1.1 向量检索候选 (Vector Candidates) - 利用 HNSW 索引
+        # 注意：generate_sql_by_query_dict 会将 ${embedding_query} 替换为 WHERE ...
+        # 我们把 ORDER BY 放最后，参数顺序：[...where_params, query_vector, limit]
+        vector_candidate_sql = """
+            SELECT id FROM embedding 
+            ${embedding_query} 
+            ORDER BY embedding <=> %s 
+            LIMIT %s
+        """
+        v_sql, v_params = generate_sql_by_query_dict(
+            {'embedding_query': query_set},
+            select_string=vector_candidate_sql,
+            with_table_name=True
+        )
+        
+        try:
+            # 参数顺序：WhereParams + QueryVector + Limit
+            vector_results = select_list(v_sql, [*v_params, json.dumps(query_embedding), candidate_top_k])
+            for row in vector_results:
+                candidate_ids.add(str(row['id']))
+        except Exception as e:
+            maxkb_logger.error(f"[BlendSearch] Vector candidate generation failed: {e}")
+
+        # 1.2 关键词检索候选 (Keyword Candidates) - 利用 GIN 索引
+        # 必须加上 search_vector @@ ... 条件才能利用索引
+        query_tokens = to_query(query_text)
+        keyword_candidate_sql = """
+            SELECT id FROM embedding 
+            ${embedding_query} 
+            AND search_vector @@ to_tsquery('simple', %s)
+            ORDER BY ts_rank_cd(search_vector, to_tsquery('simple', %s), 32) DESC 
+            LIMIT %s
+        """
+        k_sql, k_params = generate_sql_by_query_dict(
+            {'embedding_query': query_set},
+            select_string=keyword_candidate_sql,
+            with_table_name=True
+        )
+
+        try:
+            # 参数顺序：WhereParams + QueryTokens(Match) + QueryTokens(Rank) + Limit
+            keyword_results = select_list(k_sql, [*k_params, query_tokens, query_tokens, candidate_top_k])
+            for row in keyword_results:
+                candidate_ids.add(str(row['id']))
+        except Exception as e:
+            maxkb_logger.error(f"[BlendSearch] Keyword candidate generation failed: {e}")
+
+        maxkb_logger.warning(
+            f"[BlendSearch] Candidate Generation: Vector={len(vector_results) if 'vector_results' in locals() else 0}, "
+            f"Keyword={len(keyword_results) if 'keyword_results' in locals() else 0}, "
+            f"Total Unique={len(candidate_ids)}"
+        )
+
+        # 2. 如果没有候选，直接返回空
+        if not candidate_ids:
+            return []
+
+        # 3. 精确重排 (Reranking) - 仅对候选集进行复杂打分
+        # 将 query_set 限制在 candidate_ids 范围内
+        final_query_set = query_set.filter(id__in=list(candidate_ids))
+
+        exec_sql, exec_params = generate_sql_by_query_dict({'embedding_query': final_query_set},
                                                            select_string=get_file_content(
                                                                os.path.join(PROJECT_DIR, "apps", "knowledge", 'sql',
                                                                             'blend_search.sql')),
                                                            with_table_name=True)
         
-        # 调试日志 (使用 WARNING 以便在 DEBUG 日志中更显眼)
-        maxkb_logger.warning(f"[BlendSearch] SQL模板解析成功, exec_params数量={len(exec_params)}")
-
-        def parse_weight(value):
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
-
-        # 优先使用传入的权重参数
-        param_vector_weight = parse_weight(vector_weight)
-        param_keyword_weight = parse_weight(keyword_weight)
-
-        knowledge_id = query_set.values_list('knowledge_id', flat=True).first()
-        knowledge_meta = {}
-        if knowledge_id:
-            knowledge_meta = QuerySet(Knowledge).filter(id=knowledge_id).values_list('meta', flat=True).first() or {}
-
-        # 其次检查知识库配置
-        override_vector_weight = parse_weight(
-            knowledge_meta.get('vector_weight') or knowledge_meta.get('embedding_weight')
-        )
-        override_keyword_weight = parse_weight(knowledge_meta.get('keyword_weight'))
-
-        # 动态调整权重：短查询提升关键词权重，长查询提升向量权重
-        query_length = len(query_text.strip())
-        if query_length <= 5:
-            # 超短查询：关键词权重占主导
-            default_vector_weight = 0.1
-            default_keyword_weight = 0.9
-        elif query_length <= 10:
-            # 极短查询
-            default_vector_weight = 0.2
-            default_keyword_weight = 0.8
-        elif query_length <= 20:
-            # 短查询
-            default_vector_weight = 0.35
-            default_keyword_weight = 0.65
-        elif query_length <= 40:
-            # 中等查询
-            default_vector_weight = 0.5
-            default_keyword_weight = 0.5
-        else:
-            # 长查询：向量权重较高
-            default_vector_weight = 0.65
-            default_keyword_weight = 0.35
-
-        # 确定最终权重
-        # 优先级：参数 > 知识库配置 > 默认动态权重
-        if param_vector_weight is not None or param_keyword_weight is not None:
-             # 如果只传了一个，另一个互补
-            if param_vector_weight is None:
-                param_vector_weight = max(1.0 - param_keyword_weight, 0.0)
-            if param_keyword_weight is None:
-                param_keyword_weight = max(1.0 - param_vector_weight, 0.0)
-            
-            vector_weight = param_vector_weight
-            keyword_weight = param_keyword_weight
-            
-            # 归一化
-            total = vector_weight + keyword_weight
-            if total > 0:
-                vector_weight = vector_weight / total
-                keyword_weight = keyword_weight / total
-
-        elif override_vector_weight is not None or override_keyword_weight is not None:
-            if override_vector_weight is None:
-                override_vector_weight = max(1.0 - override_keyword_weight, 0.0)
-            if override_keyword_weight is None:
-                override_keyword_weight = max(1.0 - override_vector_weight, 0.0)
-            
-            total = (override_vector_weight or 0.0) + (override_keyword_weight or 0.0)
-            if total > 0:
-                vector_weight = (override_vector_weight or 0.0) / total
-                keyword_weight = (override_keyword_weight or 0.0) / total
-        else:
-            vector_weight = default_vector_weight
-            keyword_weight = default_keyword_weight
-
-
-        # 调试日志：显示关键参数 (使用 WARNING 以便在 DEBUG 日志中更显眼)
-        query_tokens = to_query(query_text)
-        maxkb_logger.warning(f"[BlendSearch] 执行查询: vector_weight={vector_weight}, keyword_weight={keyword_weight}, "
+        # 调试日志：检索参数
+        maxkb_logger.warning(f"[BlendSearch] Reranking: vector_weight={vector_weight}, keyword_weight={keyword_weight}, "
                             f"query_tokens='{query_tokens}', similarity={similarity}, top_n={top_number}")
 
         embedding_model = select_list(exec_sql, [
@@ -937,11 +931,12 @@ class BlendSearch(ISearch):
             len(query_embedding),
             json.dumps(query_embedding),
             query_tokens,
+            query_tokens,  # 传递第二次，用于归一化计算的分母
             *exec_params, similarity,
             top_number
         ])
         
-        maxkb_logger.warning(f"[BlendSearch] 查询完成: 结果数量={len(embedding_model)}")
+        maxkb_logger.warning(f"[BlendSearch] Finish: Return={len(embedding_model)}")
         return embedding_model
 
     def support(self, search_mode: SearchMode):

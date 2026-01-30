@@ -111,6 +111,9 @@ class HitTestSerializer(serializers.Serializer):
         validators.RegexValidator(regex=re.compile("^embedding|keywords|blend|page_index$"),
                                   message=_('The type only supports embedding|keywords|blend|page_index'), code=500)
     ])
+    # 混合检索权重参数
+    vector_weight = serializers.FloatField(required=False, default=0.7, min_value=0, max_value=1,
+                                           label=_('vector weight'))
 
 
 class KnowledgeSerializer(serializers.Serializer):
@@ -747,6 +750,9 @@ class KnowledgeSerializer(serializers.Serializer):
                 ) for document in QuerySet(Document).filter(knowledge_id=self.data.get('knowledge_id'), is_active=False)
             ]
             model = get_embedding_model_by_knowledge_id(self.data.get('knowledge_id'))
+            # 获取权重参数
+            vector_weight = self.data.get('vector_weight', 0.7)
+            keyword_weight = 1.0 - vector_weight
             # 向量库检索
             hit_list = vector.hit_test(
                 self.data.get('query_text'),
@@ -755,7 +761,9 @@ class KnowledgeSerializer(serializers.Serializer):
                 self.data.get('top_number'),
                 self.data.get('similarity'),
                 SearchMode(self.data.get('search_mode')),
-                model
+                model,
+                vector_weight=vector_weight,
+                keyword_weight=keyword_weight
             )
             hit_dict = reduce(lambda x, y: {**x, **y}, [{hit.get('paragraph_id'): hit} for hit in hit_list], {})
             p_list = list_paragraph([h.get('paragraph_id') for h in hit_list])

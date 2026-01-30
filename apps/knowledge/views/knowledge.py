@@ -595,3 +595,55 @@ class PageIndexTreeView(APIView):
             'tree': root_nodes,
             'flat_list': flat_list
         })
+
+
+class PageIndexStatusView(APIView):
+    """PageIndex 状态查询 API"""
+    authentication_classes = [TokenAuth]
+
+    @extend_schema(
+        methods=['GET'],
+        description=_('Get PageIndex build status for knowledge'),
+        summary=_('Get PageIndex build status'),
+        operation_id=_('Get PageIndex build status'),
+        tags=[_('Knowledge Base')]
+    )
+    @has_permissions(
+        PermissionConstants.KNOWLEDGE_READ.get_workspace_permission(),
+        RoleConstants.WORKSPACE_MANAGE.get_workspace_role(), RoleConstants.USER.get_workspace_role()
+    )
+    def get(self, request: Request, workspace_id: str, knowledge_id: str):
+        """
+        获取知识库的 PageIndex 构建状态
+        
+        返回格式：
+        {
+            "built": true/false,
+            "node_count": 123,
+            "document_count": 5
+        }
+        """
+        from knowledge.models import PageIndexNode, Document
+        
+        # 统计 PageIndex 节点数
+        node_count = PageIndexNode.objects.filter(
+            knowledge_id=knowledge_id
+        ).count()
+        
+        # 统计已构建索引的文档数（有节点的文档）
+        doc_with_index = PageIndexNode.objects.filter(
+            knowledge_id=knowledge_id
+        ).values('document_id').distinct().count()
+        
+        # 总文档数
+        total_docs = Document.objects.filter(
+            knowledge_id=knowledge_id
+        ).count()
+        
+        return result.success({
+            'built': node_count > 0,
+            'node_count': node_count,
+            'document_with_index': doc_with_index,
+            'total_documents': total_docs
+        })
+

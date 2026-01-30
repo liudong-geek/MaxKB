@@ -157,7 +157,7 @@
 
                 <!-- 【新增】检索模式选择 -->
                 <el-form-item :label="$t('views.knowledge.form.retrievalMode.label')">
-                  <el-radio-group v-model="form.search_mode">
+                  <el-radio-group v-model="form.search_mode" @change="handleSearchModeChange">
                     <el-radio label="traditional">
                       {{ $t('views.knowledge.form.retrievalMode.traditional') }}
                     </el-radio>
@@ -171,6 +171,24 @@
                   <el-text type="warning" class="mt-8 block" v-if="form.search_mode === 'page_index'">
                     {{ $t('views.knowledge.form.retrievalMode.tip') }}
                   </el-text>
+                  
+                  <!-- PageIndex 状态指示器 -->
+                  <el-alert
+                    v-if="form.search_mode === 'page_index' && !pageIndexStatus.built"
+                    type="warning"
+                    class="mt-8"
+                    :closable="false"
+                    :title="'PageIndex 尚未构建'"
+                    :description="`当前知识库 PageIndex 未构建 (节点数: ${pageIndexStatus.node_count || 0})。请先重新向量化文档以启用 PageIndex 检索。`"
+                  />
+                  <el-alert
+                    v-if="form.search_mode === 'page_index' && pageIndexStatus.built"
+                    type="success"
+                    class="mt-8"
+                    :closable="false"
+                    :title="'PageIndex 已构建'"
+                    :description="`节点数: ${pageIndexStatus.node_count}, 已索引文档: ${pageIndexStatus.document_with_index}/${pageIndexStatus.total_documents}`"
+                  />
                 </el-form-item>
 
                 <!-- 【新增】PageIndex 配置（仅在启用PageIndex时显示） -->
@@ -254,7 +272,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, reactive, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import BaseForm from '@/views/knowledge/component/BaseForm.vue'
 import { MsgSuccess, MsgConfirm } from '@/utils/message'
@@ -306,6 +324,41 @@ const form = ref<any>({
   top_n: 5,
   similarity_threshold: 0.6,
 })
+
+// PageIndex 构建状态
+const pageIndexStatus = ref<any>({
+  built: false,
+  node_count: 0,
+  document_with_index: 0,
+  total_documents: 0
+})
+
+// 获取 PageIndex 状态
+async function getPageIndexStatus() {
+  try {
+    const res = await loadSharedApi({ type: 'knowledge', systemType: apiType.value })
+      .getPageIndexStatus(id)
+    if (res.data) {
+      pageIndexStatus.value = res.data
+    }
+  } catch (e) {
+    // 忽略错误
+  }
+}
+
+// 检索模式切换处理
+function handleSearchModeChange(newMode: string) {
+  if (newMode === 'page_index' && !pageIndexStatus.value.built) {
+    MsgConfirm(
+      '提示',
+      'PageIndex 尚未构建，切换到此模式后需要重新向量化文档才能生效。保存设置后，请点击「重新向量化」按钮。',
+      { confirmButtonText: '我知道了', cancelButtonText: '取消' }
+    ).catch(() => {
+      // 用户取消，恢复为传统模式
+      form.value.search_mode = 'traditional'
+    })
+  }
+}
 
 const rules = reactive({
   source_url: [
@@ -441,6 +494,8 @@ function getDetail() {
 
 onMounted(() => {
   getDetail()
+  // 加载 PageIndex 构建状态
+  getPageIndexStatus()
 })
 </script>
 <style lang="scss" scoped>

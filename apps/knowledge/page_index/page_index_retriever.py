@@ -12,7 +12,7 @@ from collections import defaultdict
 from django.db.models import QuerySet, Q
 
 from common.utils.logger import maxkb_logger
-from knowledge.models import PageIndexNode, Embedding, SearchMode
+from knowledge.models import PageIndexNode, Embedding, SearchMode, SourceType
 from knowledge.vector.pg_vector import EmbeddingSearch, KeywordsSearch, BlendSearch
 
 
@@ -27,7 +27,9 @@ class PageIndexRetriever:
         top_n: int = 5,
         similarity_threshold: float = 0.6,
         section_filter: Optional[List[str]] = None,
-        aggregate_by_section: bool = False
+        aggregate_by_section: bool = False,
+        vector_weight: float = None,
+        keyword_weight: float = None
     ):
         """
         Args:
@@ -38,6 +40,8 @@ class PageIndexRetriever:
             similarity_threshold: 相似度阈值
             section_filter: 章节过滤列表（节点ID列表），只搜索这些章节下的内容
             aggregate_by_section: 是否按章节聚合结果
+            vector_weight: 向量检索权重 (0-1)
+            keyword_weight: 关键词检索权重 (0-1)
         """
         self.knowledge_id = knowledge_id
         self.use_tree_filter = use_tree_filter
@@ -52,6 +56,8 @@ class PageIndexRetriever:
         self.similarity_threshold = similarity_threshold
         self.section_filter = section_filter
         self.aggregate_by_section = aggregate_by_section
+        self.vector_weight = vector_weight
+        self.keyword_weight = keyword_weight
 
         # 缓存节点信息
         self._node_cache: Dict[str, Dict] = {}
@@ -181,7 +187,7 @@ class PageIndexRetriever:
         # 查询 embedding 表获取 page_index_node_id
         embeddings = Embedding.objects.filter(
             paragraph_id__in=paragraph_ids,
-            source_type=1  # PARAGRAPH
+            source_type=SourceType.PARAGRAPH  # PARAGRAPH = '1'
         ).values('paragraph_id', 'page_index_node_id', 'tree_level', 'tree_path', 'sibling_index')
 
         # 构建映射
@@ -274,7 +280,7 @@ class PageIndexRetriever:
 
         策略：
         1. 如果指定了 section_filter，只返回这些章节及其子节点
-        2. 否则返回所有 Level 0-2 的节点
+        2. 否则返回指定深度内的所有节点（默认 max_depth=5）
         3. 如果 use_tree_filter=False，返回 None（不过滤）
         """
         # 如果指定了章节过滤
@@ -285,14 +291,17 @@ class PageIndexRetriever:
             maxkb_logger.info(f"[PageIndex][检索] 树过滤关闭，直接全量候选")
             return None  # 不过滤，检索所有文档
 
-        # 策略：返回前3层的所有节点
+        # 【Phase 4 优化】可配置的最大深度，默认 5（原为 2）
+        # 修复：self.kwargs 不存在，直接使用默认值 5
+        max_depth = 5
+        
         nodes = list(PageIndexNode.objects.filter(
             knowledge_id=self.knowledge_id,
-            level__lte=2
+            level__lte=max_depth
         ).order_by('level', 'order'))
 
         maxkb_logger.info(
-            f"[PageIndex][检索] 树过滤候选节点数={len(nodes)} level<=2"
+            f"[PageIndex][检索] 树过滤候选节点数={len(nodes)} level<={max_depth}"
         )
 
         return nodes
@@ -388,17 +397,39 @@ class PageIndexRetriever:
         else:  # keywords
             search_engine = KeywordsSearch()  # fallback
 
-        # 执行搜索
-        results = search_engine.handle(
-            query_set,
-            query_text,
-            query_embedding,
-            top_number=20,  # 先召回20个，后续截断
-            similarity=similarity_threshold,
-            search_mode=self.search_mode  # 使用SearchMode枚举
-        )
+        maxkb_logger.warning(f"[PageIndex][检索] 调用 {type(search_engine).__name__}.handle() search_mode={self.search_mode} "
+                            f"vector_weight={self.vector_weight} keyword_weight={self.keyword_weight}")
 
-        maxkb_logger.info(
+        # 执行搜索
+        try:
+            # 对于 BlendSearch，传递权重参数
+            if self.search_mode_str == 'blend':
+                results = search_engine.handle(
+                    query_set,
+                    query_text,
+                    query_embedding,
+                    top_number=20,  # 先召回20个，后续截断
+                    similarity=similarity_threshold,
+                    search_mode=self.search_mode,
+                    vector_weight=self.vector_weight,
+                    keyword_weight=self.keyword_weight
+                )
+            else:
+                results = search_engine.handle(
+                    query_set,
+                    query_text,
+                    query_embedding,
+                    top_number=20,  # 先召回20个，后续截断
+                    similarity=similarity_threshold,
+                    search_mode=self.search_mode
+                )
+        except Exception as e:
+            maxkb_logger.error(f"[PageIndex][检索] search_engine.handle 失败: {type(e).__name__}: {e}")
+            import traceback
+            maxkb_logger.error(traceback.format_exc())
+            raise
+
+        maxkb_logger.warning(
             f"[PageIndex][检索] 向量检索完成，召回数={len(results)}"
         )
 

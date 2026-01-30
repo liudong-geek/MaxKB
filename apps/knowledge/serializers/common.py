@@ -469,6 +469,41 @@ def _build_page_index_for_document_if_needed(document: Document):
         maxkb_logger.error(f'[PageIndex] Build error for document {document.id}: {str(e)}', exc_info=True)
 
 
+def _link_paragraphs_to_page_index_nodes(document: Document):
+    """
+    建立段落到PageIndex节点的关联（更新Paragraph表）
+    必须在生成Embedding之前调用，确保pg_vector能获取到上下文
+    """
+    try:
+        from knowledge.models import PageIndexNode, Paragraph
+        
+        page_nodes = QuerySet(PageIndexNode).filter(document=document)
+        if not page_nodes.exists():
+            return
+
+        paragraphs = QuerySet(Paragraph).filter(document=document)
+        if not paragraphs.exists():
+            return
+
+        updated_count = 0
+        for paragraph in paragraphs:
+            # 使用现有的匹配逻辑找到最佳节点
+            matched_node = _find_best_matching_page_node(paragraph, page_nodes)
+            
+            # 如果没找到，fallback到根节点
+            if not matched_node:
+                matched_node = page_nodes.filter(level=0).order_by('order').first()
+
+            if matched_node and paragraph.page_index_node_id != matched_node.id:
+                paragraph.page_index_node = matched_node
+                paragraph.save(update_fields=['page_index_node'])
+                updated_count += 1
+        
+        maxkb_logger.info(f'[PageIndex] Linked {updated_count}/{paragraphs.count()} paragraphs to nodes for document {document.id}')
+    except Exception as e:
+        maxkb_logger.error(f'[PageIndex] Link error for document {document.id}: {str(e)}', exc_info=True)
+
+
 def _sync_page_index_embeddings_for_document(document: Document):
     """
     将段落向量与PageIndex节点进行绑定，补齐page_index_node/tree_path等字段

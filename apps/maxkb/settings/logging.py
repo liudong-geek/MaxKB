@@ -99,7 +99,7 @@ LOGGING = {
         'django.db.backends': {
             'handlers': ['console', 'file', 'syslog'],
             'propagate': False,
-            'level': LOG_LEVEL,
+            'level': 'INFO',
         },
         'django.server': {
             'handlers': ['console', 'file', 'syslog'],
@@ -108,7 +108,7 @@ LOGGING = {
         },
         'max_kb': {
             'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
+            'level': 'DEBUG',
             'propagate': False,
         },
         'common.event': {

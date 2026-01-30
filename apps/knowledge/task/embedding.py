@@ -56,8 +56,8 @@ def embedding_by_paragraph_list(paragraph_id_list, model_id):
 @celery_app.task(base=QueueOnce, once={'keys': ['document_id']}, name='celery:embedding_by_document')
 def embedding_by_document(document_id, model_id, state_list=None):
     """
-    向量化文档
-    @param state_list:
+    maxkb_logger.info(f'============ [DEBUG] embedding_by_document TASK STARTED: document_id={document_id} ============')
+    if state_list is None:
     @param document_id: 文档id
     @param model_id 向量模型
     :return: None
@@ -79,11 +79,12 @@ def embedding_by_document(document_id, model_id, state_list=None):
 
     # 【关键修改】在向量化之前先构建PageIndex，确保page_index_node表有数据
     try:
-        from knowledge.serializers.common import _build_page_index_for_document_if_needed
+        from knowledge.serializers.common import _build_page_index_for_document_if_needed, _link_paragraphs_to_page_index_nodes
         document = QuerySet(Document).filter(id=document_id).first()
         if document:
             _build_page_index_for_document_if_needed(document)
-            maxkb_logger.info(f'[PageIndex] Pre-build completed for document {document_id} before embedding')
+            _link_paragraphs_to_page_index_nodes(document)
+            maxkb_logger.info(f'[PageIndex] Pre-build and Link completed for document {document_id} before embedding')
     except Exception as e:
         maxkb_logger.warning(f'[PageIndex] Pre-build failed for document {document_id}: {e}')
 

@@ -239,55 +239,94 @@ class PageIndex:
                 parent.save()
     
     def _sync_paragraph_sections(self, document: Document, paragraphs):
-        """同步段落的章节标题/路径/摘要"""
+        """
+        【Phase 2 重构】精确同步段落与PageIndex节点的关联
+        
+        策略：基于段落内容在全文中的位置区间，与节点内容区间求交集
+        """
         paragraph_list = list(paragraphs)
         if not paragraph_list:
             return
 
-        nodes = list(PageIndexNode.objects.filter(document=document).values(
-            'id', 'title', 'level', 'path', 'order', 'content'
-        ))
+        # 1. 获取所有节点的数据库记录（需要完整对象以便设置外键）
+        nodes = list(PageIndexNode.objects.filter(document=document))
         if not nodes:
+            print(f"[PageIndex] No nodes found for document {document.id}")
             return
 
-        root_node = next((node for node in nodes if node.get('level') == 0), None)
-        node_by_title = {}
-        nodes_by_level = []
-
+        # 2. 构建全文档内容（用于偏移量计算）
+        separator = '\n\n'
+        full_content = separator.join([p.content for p in paragraph_list])
+        
+        # 3. 计算每个段落在全文中的区间 [start, end)
+        paragraph_ranges = []
+        cursor = 0
+        for para in paragraph_list:
+            start = cursor
+            end = cursor + len(para.content)
+            paragraph_ranges.append({
+                'paragraph': para,
+                'start': start,
+                'end': end
+            })
+            cursor = end + len(separator)  # 跳过分隔符
+        
+        # 4. 计算每个节点在全文中的区间（通过查找节点内容在全文中的位置）
+        node_ranges = []
         for node in nodes:
-            normalized_title = self._normalize_title(node.get('title'))
-            if normalized_title:
-                node_by_title[normalized_title] = node
-            nodes_by_level.append(node)
-
-        nodes_by_level.sort(key=lambda n: -(n.get('level') or 0))
-
+            node_content = node.content or ''
+            if not node_content.strip():
+                continue
+            # 使用节点内容的前200字符来定位（避免超长内容）
+            search_key = node_content[:200].strip()
+            if not search_key:
+                continue
+            try:
+                start_idx = full_content.find(search_key)
+                if start_idx != -1:
+                    node_ranges.append({
+                        'node': node,
+                        'start': start_idx,
+                        'end': start_idx + len(node_content)
+                    })
+            except Exception:
+                pass
+        
+        # 按起始位置排序节点
+        node_ranges.sort(key=lambda x: x['start'])
+        
+        # 5. 匹配段落到节点（基于区间重叠）
+        root_node = next((n for n in nodes if n.level == 0), None)
         updates = []
-
-        for paragraph in paragraph_list:
-            para_title = (paragraph.title or '').strip()
-            para_content = (paragraph.content or '').strip()
+        
+        for pr in paragraph_ranges:
+            para = pr['paragraph']
+            para_start, para_end = pr['start'], pr['end']
             matched_node = None
-
-            normalized_title = self._normalize_title(para_title)
-            if normalized_title:
-                matched_node = node_by_title.get(normalized_title)
-
-            if matched_node is None and para_content:
-                content_prefix = para_content[:100]
-                for node in nodes_by_level:
-                    node_content = node.get('content') or ''
-                    if content_prefix and content_prefix in node_content:
-                        matched_node = node
-                        break
-
+            max_overlap = 0
+            
+            # 找重叠度最大的节点（优先深层节点）
+            for nr in node_ranges:
+                node = nr['node']
+                node_start, node_end = nr['start'], nr['end']
+                
+                # 计算重叠区间
+                overlap_start = max(para_start, node_start)
+                overlap_end = min(para_end, node_end)
+                overlap = max(0, overlap_end - overlap_start)
+                
+                if overlap > max_overlap or (overlap == max_overlap and node.level > (matched_node.level if matched_node else -1)):
+                    max_overlap = overlap
+                    matched_node = node
+            
+            # 如果没有找到匹配，使用根节点
             if matched_node is None:
                 matched_node = root_node
-
-            section_title = (matched_node.get('title') if matched_node else '') or ''
-            section_path = ''
+            
+            # 6. 更新段落的关联字段
             if matched_node:
-                path = matched_node.get('path') or []
+                section_title = self._normalize_title(matched_node.title) or ''
+                path = matched_node.path or []
                 if isinstance(path, str):
                     try:
                         path = json.loads(path)
@@ -295,54 +334,30 @@ class PageIndex:
                         path = [path]
                 path_items = [self._normalize_title(item) for item in path if item]
                 section_path = " > ".join([item for item in path_items if item])
-
-            summary_source = (matched_node.get('content') if matched_node else '') or ''
-            summary_text = summary_source.strip() or para_content
-            summary = summary_text[:200].strip()
-
-            changed = False
-            if paragraph.section_title != section_title:
-                paragraph.section_title = section_title
-                changed = True
-            if paragraph.section_path != section_path:
-                paragraph.section_path = section_path
-                changed = True
-            if paragraph.summary != summary:
-                paragraph.summary = summary
-                changed = True
-
-            if changed:
-                updates.append(paragraph)
-                print(f"[PageIndex] Paragraph {paragraph.id} updated:")
-                print(f"  section_title: '{section_title}'")
-                print(f"  section_path: '{section_path}'") 
-                print(f"  summary: '{summary[:50]}...'")
-
+                summary = (matched_node.content or para.content)[:200].strip()
+                
+                # 直接设置外键关联
+                para.page_index_node = matched_node
+                para.section_title = section_title
+                para.section_path = section_path
+                para.summary = summary
+                updates.append(para)
+        
+        # 7. 批量更新
         if updates:
             try:
-                # 使用bulk_update进行批量更新
-                Paragraph.objects.bulk_update(updates, ['section_title', 'section_path', 'summary'])
-                print(f"[PageIndex] Updated paragraph sections: {len(updates)}")
-                
-                # 验证更新结果
-                updated_count = 0
-                for paragraph in updates:
-                    paragraph.refresh_from_db()
-                    if paragraph.section_title or paragraph.section_path or paragraph.summary:
-                        updated_count += 1
-                    else:
-                        print(f"[PageIndex] Warning: Paragraph {paragraph.id} still has empty fields after update")
-                
-                print(f"[PageIndex] Verified {updated_count}/{len(updates)} paragraphs have non-empty fields")
-                
+                Paragraph.objects.bulk_update(
+                    updates, 
+                    ['page_index_node', 'section_title', 'section_path', 'summary']
+                )
+                print(f"[PageIndex] Updated {len(updates)} paragraphs with precise node association")
             except Exception as e:
-                print(f"[PageIndex] Error updating paragraph sections: {e}")
-                # 回退到单个更新
-                for paragraph in updates:
+                print(f"[PageIndex] Bulk update failed: {e}, falling back to individual saves")
+                for para in updates:
                     try:
-                        paragraph.save(update_fields=['section_title', 'section_path', 'summary'])
+                        para.save(update_fields=['page_index_node', 'section_title', 'section_path', 'summary'])
                     except Exception as e2:
-                        print(f"[PageIndex] Error saving paragraph {paragraph.id}: {e2}")
+                        print(f"[PageIndex] Error saving paragraph {para.id}: {e2}")
 
     def _create_node(
         self,

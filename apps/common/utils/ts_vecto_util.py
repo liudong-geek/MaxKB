@@ -85,6 +85,14 @@ def to_ts_vector(text: str):
 
 
 def to_query(text: str):
+    """
+    将查询文本转换为 PostgreSQL tsquery 格式
+    使用 OR (|) 逻辑连接词，只要匹配任一词即可
+    
+    注意：返回值需要配合 to_tsquery('simple', ...) 使用
+    """
+    import re
+    
     # 中文停用词列表
     stopwords = {'的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个',
                  '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好',
@@ -94,6 +102,11 @@ def to_query(text: str):
 
     extract_tags = jieba.lcut(text, cut_all=True)
 
+    # 转义 tsquery 特殊字符，避免 SQL 语法错误
+    def escape_tsquery_chars(word: str) -> str:
+        # 移除 tsquery 操作符和特殊字符: & | ! ( ) : * < >
+        return re.sub(r'[&|!():*<>\'\"]', '', word)
+
     # 过滤停用词和单字符（保留英文、数字）
     filtered_tags = []
     for tag in extract_tags:
@@ -102,11 +115,30 @@ def to_query(text: str):
         if tag_stripped and (len(tag_stripped) > 1 or tag_stripped.isalnum()):
             if tag_stripped not in stopwords:
                 # 转换为小写，确保与search_vector匹配
-                filtered_tags.append(tag_stripped.lower())
+                # 转义特殊字符
+                escaped = escape_tsquery_chars(tag_stripped.lower())
+                if escaped:  # 确保转义后不为空
+                    filtered_tags.append(escaped)
 
     # 如果过滤后为空，使用原始分词（避免查询为空）
     if not filtered_tags:
-        filtered_tags = [tag.strip().lower() for tag in extract_tags if tag.strip()]
+        filtered_tags = [escape_tsquery_chars(tag.strip().lower()) 
+                        for tag in extract_tags 
+                        if tag.strip() and escape_tsquery_chars(tag.strip().lower())]
 
-    result = " ".join(filtered_tags)
+    # 去重，保持顺序
+    seen = set()
+    unique_tags = []
+    for tag in filtered_tags:
+        if tag not in seen:
+            seen.add(tag)
+            unique_tags.append(tag)
+
+    # 使用 | 连接词，生成 OR 逻辑的 tsquery
+    # 例如：'科技' | '产业' | 'ai'
+    # 如果为空，返回一个不会匹配任何内容的查询
+    if not unique_tags:
+        return "xyznonexistent123"  # 返回一个不太可能存在的词
+    
+    result = " | ".join(unique_tags)
     return result

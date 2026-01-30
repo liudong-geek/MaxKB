@@ -105,7 +105,7 @@ class KnowledgeFolder(MPTTModel, AppModelMixin):
     desc = models.CharField(max_length=200, null=True, blank=True, verbose_name="描述")
     user = models.ForeignKey(User, on_delete=models.SET_NULL, db_constraint=False, blank=True, null=True)
     workspace_id = models.CharField(max_length=64, verbose_name="工作空间id", default="default", db_index=True)
-    parent = TreeForeignKey('self', on_delete=models.DO_NOTHING, null=True, blank=True, related_name='children')
+    parent = TreeForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
 
     class Meta:
         db_table = "knowledge_folder"
@@ -127,7 +127,7 @@ class Knowledge(AppModelMixin):
                                db_index=True)
     scope = models.CharField(max_length=20, verbose_name='可用范围', choices=KnowledgeScope.choices,
                              default=KnowledgeScope.WORKSPACE, db_index=True)
-    folder = models.ForeignKey(KnowledgeFolder, on_delete=models.DO_NOTHING, verbose_name="文件夹id", default='default')
+    folder = models.ForeignKey(KnowledgeFolder, on_delete=models.CASCADE, verbose_name="文件夹id", default='default')
     embedding_model = models.ForeignKey(Model, on_delete=models.SET_NULL, db_constraint=False, blank=True, null=True)
     file_size_limit = models.IntegerField(verbose_name="文件大小限制", default=100)
     file_count_limit = models.IntegerField(verbose_name="文件数量限制", default=50)
@@ -178,7 +178,7 @@ class Document(AppModelMixin):
     文档表
     """
     id = models.UUIDField(primary_key=True, max_length=128, default=uuid.uuid7, editable=False, verbose_name="主键id")
-    knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING, verbose_name="知识库id")
+    knowledge = models.ForeignKey(Knowledge, on_delete=models.CASCADE, verbose_name="知识库id")
     name = models.CharField(max_length=150, verbose_name="文档名称", db_index=True)
     char_length = models.IntegerField(verbose_name="文档字符数 冗余字段")
     status = models.CharField(verbose_name='状态', max_length=20, default=get_default_status, db_index=True)
@@ -202,7 +202,7 @@ class Tag(AppModelMixin):
     标签表 - 存储标签的key-value定义
     """
     id = models.UUIDField(primary_key=True, max_length=128, default=uuid.uuid7, editable=False, verbose_name="主键id")
-    knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING, verbose_name="知识库", db_constraint=False)
+    knowledge = models.ForeignKey(Knowledge, on_delete=models.CASCADE, verbose_name="知识库", db_constraint=False)
     key = models.CharField(max_length=64, verbose_name="标签键", db_index=True)
     value = models.CharField(max_length=128, verbose_name="标签值", db_index=True)
 
@@ -219,8 +219,8 @@ class DocumentTag(AppModelMixin):
     文档标签关联表
     """
     id = models.UUIDField(primary_key=True, max_length=128, default=uuid.uuid7, editable=False, verbose_name="主键id")
-    document = models.ForeignKey(Document, on_delete=models.DO_NOTHING, verbose_name="文档", db_constraint=False)
-    tag = models.ForeignKey(Tag, on_delete=models.DO_NOTHING, verbose_name="标签", db_constraint=False)
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, verbose_name="文档", db_constraint=False)
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE, verbose_name="标签", db_constraint=False)
 
     class Meta:
         db_table = "document_tag"
@@ -232,8 +232,8 @@ class Paragraph(AppModelMixin):
     段落表
     """
     id = models.UUIDField(primary_key=True, max_length=128, default=uuid.uuid7, editable=False, verbose_name="主键id")
-    document = models.ForeignKey(Document, on_delete=models.DO_NOTHING, db_constraint=False)
-    knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING)
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, db_constraint=False)
+    knowledge = models.ForeignKey(Knowledge, on_delete=models.CASCADE)
     content = models.CharField(max_length=102400, verbose_name="段落内容")
     title = models.CharField(max_length=256, verbose_name="标题", default="", db_index=True)
     section_title = models.CharField(max_length=256, verbose_name="章节标题", default="", db_index=True)
@@ -247,6 +247,16 @@ class Paragraph(AppModelMixin):
     position = models.IntegerField(verbose_name="段落顺序", default=0, db_index=True)
     chunks = ArrayField(verbose_name="块", base_field=models.CharField(), default=list)
 
+    # 建立强关联
+    page_index_node = models.ForeignKey(
+        'PageIndexNode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='paragraphs',
+        verbose_name="所属树节点"
+    )
+
     class Meta:
         db_table = "paragraph"
 
@@ -256,7 +266,7 @@ class Problem(AppModelMixin):
     问题表
     """
     id = models.UUIDField(primary_key=True, max_length=128, default=uuid.uuid7, editable=False, verbose_name="主键id")
-    knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING, db_constraint=False)
+    knowledge = models.ForeignKey(Knowledge, on_delete=models.CASCADE, db_constraint=False)
     content = models.CharField(max_length=256, verbose_name="问题内容", db_index=True)
     hit_num = models.IntegerField(verbose_name="命中次数", default=0)
 
@@ -266,21 +276,21 @@ class Problem(AppModelMixin):
 
 class ProblemParagraphMapping(AppModelMixin):
     id = models.UUIDField(primary_key=True, max_length=128, default=uuid.uuid7, editable=False, verbose_name="主键id")
-    knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING, db_constraint=False)
-    document = models.ForeignKey(Document, on_delete=models.DO_NOTHING, db_constraint=False)
-    problem = models.ForeignKey(Problem, on_delete=models.DO_NOTHING, db_constraint=False)
-    paragraph = models.ForeignKey(Paragraph, on_delete=models.DO_NOTHING, db_constraint=False)
+    knowledge = models.ForeignKey(Knowledge, on_delete=models.CASCADE, db_constraint=False)
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, db_constraint=False)
+    problem = models.ForeignKey(Problem, on_delete=models.CASCADE, db_constraint=False)
+    paragraph = models.ForeignKey(Paragraph, on_delete=models.CASCADE, db_constraint=False)
 
     class Meta:
         db_table = "problem_paragraph_mapping"
 
 
-class SourceType(models.IntegerChoices):
-    """订单类型"""
-    PROBLEM = 0, '问题'
-    PARAGRAPH = 1, '段落'
-    TITLE = 2, '标题'
-    SUMMARY = 3, '摘要'
+class SourceType(models.TextChoices):
+    """资源类型"""
+    PROBLEM = '0', '问题'
+    PARAGRAPH = '1', '段落'
+    TITLE = '2', '标题'
+    SUMMARY = '3', '摘要'
 
 
 
@@ -377,9 +387,9 @@ class Embedding(models.Model):
     source_type = models.CharField(verbose_name='资源类型', max_length=5, choices=SourceType.choices,
                                    default=SourceType.PROBLEM, db_index=True)
     is_active = models.BooleanField(verbose_name="是否可用", max_length=1, default=True)
-    knowledge = models.ForeignKey(Knowledge, on_delete=models.DO_NOTHING, verbose_name="文档关联", db_constraint=False)
-    document = models.ForeignKey(Document, on_delete=models.DO_NOTHING, verbose_name="文档关联", db_constraint=False)
-    paragraph = models.ForeignKey(Paragraph, on_delete=models.DO_NOTHING, verbose_name="段落关联", db_constraint=False)
+    knowledge = models.ForeignKey(Knowledge, on_delete=models.CASCADE, verbose_name="文档关联", db_constraint=False)
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, verbose_name="文档关联", db_constraint=False)
+    paragraph = models.ForeignKey(Paragraph, on_delete=models.CASCADE, verbose_name="段落关联", db_constraint=False)
     embedding = VectorField(verbose_name="向量")
     search_vector = SearchVectorField(verbose_name="分词", default="")
     meta = models.JSONField(verbose_name="元数据", default=dict)

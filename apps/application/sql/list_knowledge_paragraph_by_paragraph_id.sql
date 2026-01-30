@@ -1,5 +1,4 @@
-SELECT DISTINCT ON (paragraph."id")
-	paragraph.*,
+SELECT DISTINCT ON (paragraph."id") paragraph.*,
 	knowledge."name" AS "knowledge_name",
 	knowledge."type" AS "knowledge_type",
 	"document"."name" AS "document_name",
@@ -12,13 +11,14 @@ SELECT DISTINCT ON (paragraph."id")
 	page_index_node."level" AS "tree_level",
 	page_index_node."path" AS "tree_path",
 	page_index_node."order" AS "sibling_index"
-FROM
-	paragraph paragraph
+FROM paragraph paragraph
 	LEFT JOIN knowledge knowledge ON knowledge."id" = paragraph.knowledge_id
 	LEFT JOIN "document" "document" ON "document"."id" = paragraph.document_id
 	LEFT JOIN LATERAL (
-		SELECT * FROM embedding
-		WHERE embedding.paragraph_id = paragraph."id" AND embedding.source_type = 1
+		SELECT *
+		FROM embedding
+		WHERE embedding.paragraph_id = paragraph."id"
+			AND embedding.source_type = '1'
 		LIMIT 1
 	) embedding ON true
 	LEFT JOIN page_index_node page_index_node ON page_index_node."id" = embedding.page_index_node_id

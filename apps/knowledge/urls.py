@@ -91,4 +91,6 @@ urlpatterns = [
     path('workspace/<str:workspace_id>/knowledge/<str:knowledge_id>/knowledge_version/<str:knowledge_version_id>', views.KnowledgeWorkflowVersionView.Operate.as_view()),
     # PageIndex 章节树 API
     path('workspace/<str:workspace_id>/knowledge/<str:knowledge_id>/page_index_tree', views.PageIndexTreeView.as_view()),
+    # PageIndex 状态查询 API
+    path('workspace/<str:workspace_id>/knowledge/<str:knowledge_id>/page_index_status', views.PageIndexStatusView.as_view()),
 ]
